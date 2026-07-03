@@ -1,0 +1,1553 @@
+/* Tesla Dashcam Viewer Styles */
+
+:root {
+    color-scheme: light dark;
+    --bg: #0a0a0a;
+    --bg-panel: #141414;
+    --bg-hover: #1a1a1a;
+    --text: #e8e8e8;
+    --text-muted: #888888;
+    --accent: #1f6feb; /* blue (matches HUD) */
+    --accent-hover: #3b9bff;
+    --border: #333333;
+    --success: #22c55e;
+    --warning: #eab308;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    height: 100%;
+    overflow: hidden;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.4;
+}
+
+/* ===== APP SHELL ===== */
+.app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+/* ===== HEADER ===== */
+.header {
+    flex-shrink: 0;
+    padding: 0.75rem 1rem;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+}
+
+.header h1 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 0.125rem;
+}
+
+.header .subtitle {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+/* ===== MAIN LAYOUT ===== */
+.main {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* ===== SIDEBAR (Events) ===== */
+/* Auto-hiding events dock */
+.events-dock {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 50;
+}
+
+.events-toggle {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(20, 20, 22, 0.62);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    backdrop-filter: blur(18px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.events-toggle:hover { background: rgba(44, 44, 48, 0.72); }
+.events-toggle.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+.sidebar {
+    position: absolute;
+    top: 46px;
+    left: 0;
+    width: 244px;
+    max-height: calc(100vh - 210px);
+    z-index: 50;
+    background: rgba(20, 20, 22, 0.72);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    backdrop-filter: blur(18px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 16px;
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transform: translateX(-118%);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.22s ease, opacity 0.22s ease;
+}
+
+.sidebar.hover,
+.sidebar.open {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.sidebar-header {
+    padding: 0.75rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.sidebar-header h2 {
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.event-filters {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0 0.5rem 0.5rem;
+}
+
+.event-filter-btn {
+    flex: 1;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.event-filter-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text);
+}
+
+.event-filter-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+.event-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem;
+}
+
+.event-list .placeholder {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    text-align: center;
+    padding: 2rem 1rem;
+}
+
+/* Event items */
+.event-item {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    margin-bottom: 0.3rem;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.event-item:hover {
+    background: rgba(255, 255, 255, 0.09);
+}
+
+.event-item.active {
+    background: rgba(31, 111, 235, 0.22);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.event-item .thumb {
+    width: 48px;
+    height: 36px;
+    border-radius: 4px;
+    background: var(--bg);
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.event-item .info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.event-item .name {
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.event-item .meta {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+}
+
+.event-item.active .meta {
+    color: rgba(255,255,255,0.7);
+}
+
+/* Event type badges */
+.event-badge {
+    font-size: 0.6rem;
+    padding: 0.125rem 0.375rem;
+    border-radius: 3px;
+    background: var(--border);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.event-badge.saved { background: #1d4ed8; color: #fff; }
+.event-badge.sentry { background: #7c3aed; color: #fff; }
+.event-badge.recent { background: #059669; color: #fff; }
+
+/* ===== VIDEO SECTION ===== */
+.video-section {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    background: #000;
+}
+
+/* Drop overlay */
+.drop-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.9);
+    transition: opacity 0.2s;
+}
+
+.drop-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.drop-overlay.dragover {
+    background: rgba(31, 111, 235, 0.1);
+    border: 2px dashed var(--accent);
+}
+
+.drop-content {
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.drop-content svg {
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
+.drop-content p {
+    font-size: 1rem;
+    margin-bottom: 0.25rem;
+}
+
+.drop-content .hint {
+    font-size: 0.8rem;
+    opacity: 0.6;
+}
+
+/* ===== VIDEO GRID (GridStack) ===== */
+.grid-stack {
+    flex: 1;
+    min-height: 0;
+    background: var(--bg);
+}
+
+/* GridStack dark theme overrides */
+.grid-stack > .grid-stack-item > .grid-stack-item-content {
+    background: #000;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.grid-stack-item {
+    cursor: move;
+}
+
+.grid-stack-item.ui-draggable-dragging,
+.grid-stack-item.ui-resizable-resizing {
+    z-index: 100;
+}
+
+/* Placeholder while dragging */
+.grid-stack-placeholder > .placeholder-content {
+    background: var(--accent) !important;
+    opacity: 0.2;
+    border: 2px dashed var(--accent) !important;
+    border-radius: 4px;
+}
+
+/* Camera widget content */
+.camera-widget {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+}
+
+.camera-widget video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.camera-widget .video-label {
+    position: absolute;
+    top: 0.5rem;
+    left: 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.25rem 0.5rem;
+    background: rgba(0, 0, 0, 0.7);
+    border-radius: 4px;
+    color: #fff;
+    pointer-events: none;
+    z-index: 5;
+}
+
+.camera-widget .remove-btn {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s;
+    z-index: 5;
+}
+
+.camera-widget:hover .remove-btn {
+    opacity: 1;
+}
+
+.camera-widget .remove-btn:hover {
+    background: var(--accent);
+}
+
+.camera-widget .remove-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* No video available indicator */
+.camera-widget.no-video::after {
+    content: 'No Video';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    background: rgba(0, 0, 0, 0.5);
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    z-index: 3;
+}
+
+/* Empty grid placeholder */
+.grid-empty-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    background: var(--bg);
+    z-index: 10;
+}
+
+.grid-empty-placeholder.hidden {
+    display: none;
+}
+
+.grid-empty-placeholder p {
+    color: var(--text-muted);
+    font-size: 1rem;
+}
+
+/* Grid controls in toolbar */
+.grid-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.preset-selector {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.preset-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.preset-btn.active {
+    background: var(--accent);
+    color: #fff;
+}
+
+/* Add camera dropdown */
+.add-camera-dropdown {
+    position: relative;
+}
+
+.dropdown-menu {
+    position: absolute;
+    bottom: 100%;
+    right: 0;
+    margin-bottom: 0.5rem;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.25rem;
+    min-width: 140px;
+    display: none;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.dropdown-menu.open {
+    display: block;
+}
+
+.dropdown-item {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-size: 0.8rem;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.1s;
+}
+
+.dropdown-item:hover {
+    background: var(--bg-hover);
+}
+
+.dropdown-item.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* ===== SEGMENT TIMELINE ===== */
+.segment-timeline-container {
+    flex-shrink: 0;
+    padding: 5px 16px;
+    background: transparent;
+}
+.segment-timeline-container.hidden { display: none; }
+
+.segment-timeline {
+    display: flex;
+    gap: 3px;
+    height: 8px;
+}
+
+.segment-marker {
+    height: 100%;
+    min-width: 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.22);
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.12s ease;
+}
+
+.segment-marker:hover {
+    background: rgba(255, 255, 255, 0.45);
+    transform: scaleY(1.35);
+}
+
+/* Played segments fill in blue; the current one is bright with a soft glow */
+.segment-marker.played {
+    background: rgba(59, 155, 255, 0.8);
+}
+
+.segment-marker.active {
+    background: var(--accent);
+}
+
+.segment-time {
+    display: none;
+}
+
+/* ===== PLAYBACK CONTROLS ===== */
+.controls {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: linear-gradient(to top, rgba(8, 8, 10, 0.96), rgba(8, 8, 10, 0.82));
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.controls input[type="range"] {
+    flex: 1;
+    height: 4px;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border);
+    border-radius: 2px;
+}
+
+.controls input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.controls input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    background: var(--accent);
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.controls input[type="range"]:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.time-display {
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    min-width: 100px;
+}
+
+.segment-info {
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    background: var(--border);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+/* ===== SEI PANEL ===== */
+.unit-toggle {
+    display: flex;
+    gap: 0.125rem;
+}
+
+/* ===== FLOATING TESLA-STYLE VEHICLE HUD ===== */
+.sei-hud {
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-8px);
+    z-index: 60;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.sei-hud.visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+.sei-hud .sei-content {
+    padding: 0;
+    overflow: visible;
+}
+
+.hud-pill {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    /* Even inset on all sides so the corner icons sit an equal distance
+       from every edge (Apple-style consistent spacing). */
+    padding: 12px;
+    background: rgba(22, 22, 24, 0.72);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    backdrop-filter: blur(18px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 20px;
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+    color: #fff;
+}
+
+.hud-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.hud-center {
+    gap: 2px;
+    padding: 0 4px;
+}
+
+/* Gear badge */
+.hud-gear {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.95rem;
+    background: rgba(255, 255, 255, 0.12);
+    color: #cfd2d6;
+}
+.hud-gear.gear-D { background: #1f6feb; color: #fff; }
+.hud-gear.gear-R { background: #d29922; color: #1a1a1a; }
+.hud-gear.gear-N,
+.hud-gear.gear-P { background: rgba(255, 255, 255, 0.16); color: #fff; }
+
+/* Icon slots (brake / steering wheel / accelerator) */
+.hud-icon {
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.32);
+    transition: color 0.15s ease, filter 0.15s ease;
+}
+.hud-icon svg { width: 24px; height: 24px; }
+.hud-brake.active { color: #ff453a; }
+.hud-wheel.active { color: #3b9bff; }
+.hud-accel.active { color: #30d158; }
+
+/* Speed cluster */
+.hud-speed-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.hud-speed-num {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1;
+    min-width: 1.7ch;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+.hud-unit {
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: rgba(255, 255, 255, 0.55);
+    margin-top: 1px;
+}
+.hud-arrow {
+    color: rgba(255, 255, 255, 0.16);
+    display: flex;
+}
+.hud-arrow svg { width: 18px; height: 18px; }
+.hud-arrow.active {
+    color: #30d158;
+    animation: hud-blink 0.9s ease-in-out infinite;
+}
+@keyframes hud-blink {
+    0%, 42% { opacity: 1; }
+    58%, 100% { opacity: 0.12; }
+}
+.hud-autopilot {
+    font-size: 0.66rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.4);
+    min-height: 0.95rem;
+    letter-spacing: 0.02em;
+}
+.hud-autopilot.active { color: #3b9bff; }
+
+/* ===== FLOATING MAP CARD ===== */
+/* GTA-style minimap: translucent so video shows through, muted tint,
+   controls tucked away until you hover it. */
+.map-float {
+    position: absolute;
+    right: 14px;
+    bottom: 96px;
+    width: 256px;
+    z-index: 55;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4);
+    opacity: 0.9;
+    transition: opacity 0.2s ease, bottom 0.2s ease;
+}
+.map-float:hover { opacity: 1; }
+
+/* When the export bar is open it grows the bottom control stack, so lift the
+   map clear of it instead of letting them overlap. */
+.export-bar:not(.hidden) ~ .map-float {
+    bottom: 152px;
+}
+
+/* Controls overlay the top of the map, revealed on hover */
+.map-header {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.25rem;
+    padding: 5px 6px;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+}
+.map-float:hover .map-header {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.map-controls {
+    display: flex;
+    gap: 0.125rem;
+}
+
+.map-layer-btn,
+.map-orient-btn {
+    padding: 0.15rem 0.4rem;
+    font-size: 0.6rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.map-wrapper {
+    height: 182px;
+    overflow: hidden;
+    position: relative;
+}
+
+/* Dark GTA-5-style recolour of the CARTO dark basemap (street layer only) */
+.map-wrapper.layer-street .leaflet-tile-pane {
+    filter: brightness(1.35) saturate(1.6) sepia(0.35) hue-rotate(42deg) contrast(1.02);
+}
+.map-wrapper.layer-satellite .leaflet-tile-pane {
+    filter: saturate(0.9) brightness(0.95);
+}
+
+/* Map needs to be larger than container to prevent black edges when rotated */
+.map {
+    /* Make map 50% larger in each direction to cover corners when rotated */
+    position: absolute;
+    width: 150%;
+    height: 150%;
+    top: -25%;
+    left: -25%;
+    z-index: 1;
+    transition: transform 0.3s ease-out;
+    transform-origin: center center;
+}
+
+.map-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    z-index: 20;
+}
+
+.map-placeholder.hidden {
+    display: none;
+}
+
+.map-placeholder p {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+/* Car marker icon */
+.car-marker-container {
+    background: transparent !important;
+    border: none !important;
+}
+
+.car-arrow {
+    width: 32px;
+    height: 32px;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+}
+
+.car-arrow svg {
+    width: 100%;
+    height: 100%;
+}
+
+/* Override Leaflet styles for dark theme */
+.leaflet-container {
+    background: #1a1a1a;
+    font-family: inherit;
+}
+
+/* Counter-rotate controls when map is rotated */
+.leaflet-control-container {
+    transition: transform 0.3s ease-out;
+    transform-origin: center center;
+}
+
+.leaflet-control-zoom {
+    border: none !important;
+}
+
+.leaflet-control-zoom a {
+    background: var(--bg-panel) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--border) !important;
+    width: 26px !important;
+    height: 26px !important;
+    line-height: 24px !important;
+    font-size: 14px !important;
+}
+
+.leaflet-control-zoom a:hover {
+    background: var(--bg-hover) !important;
+}
+
+.leaflet-control-attribution {
+    background: rgba(0,0,0,0.6) !important;
+    color: var(--text-muted) !important;
+    font-size: 0.5rem !important;
+    padding: 2px 5px !important;
+    transition: transform 0.3s ease-out;
+}
+
+.leaflet-control-attribution a {
+    color: var(--text-muted) !important;
+}
+
+/* Compass/North indicator - stays fixed in wrapper */
+.compass-indicator {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 15;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: rgba(0,0,0,0.6);
+    border-radius: 50%;
+    transition: transform 0.3s ease-out;
+}
+
+.compass-indicator svg {
+    width: 14px;
+    height: 14px;
+}
+
+.compass-indicator .compass-n {
+    fill: var(--accent);
+}
+
+.compass-indicator .compass-s {
+    fill: #ffffff;
+}
+
+/* Speed and Autopilot row */
+.sei-speed-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 0.75rem;
+    gap: 0.5rem;
+}
+
+.sei-speed {
+    display: flex;
+    flex-direction: column;
+}
+
+.sei-speed .speed-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.125rem;
+}
+
+.sei-speed .speed-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1;
+}
+
+.sei-autopilot {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    text-align: right;
+}
+
+.sei-autopilot .autopilot-label {
+    font-size: 0.55rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.125rem;
+}
+
+.sei-autopilot .autopilot-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    line-height: 1;
+}
+
+.sei-autopilot.active .autopilot-value {
+    color: #3b82f6;
+}
+
+/* SEI field items */
+.sei-item {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 0.75rem;
+}
+
+.sei-item .label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.125rem;
+}
+
+.sei-item .value {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.sei-item .value.highlight {
+    color: var(--accent);
+}
+
+/* Pedal displays */
+.sei-pedals {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.pedal-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.pedal-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    width: 70px;
+    flex-shrink: 0;
+}
+
+.pedal-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--bg);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.pedal-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.1s ease-out;
+}
+
+.pedal-fill.accel {
+    background: linear-gradient(90deg, #22c55e, #84cc16);
+}
+
+.pedal-fill.brake {
+    background: var(--border);
+}
+
+.pedal-fill.brake.active {
+    background: linear-gradient(90deg, #ef4444, #f97316);
+}
+
+.pedal-value {
+    font-size: 0.7rem;
+    font-weight: 600;
+    width: 35px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Blinker indicators */
+.sei-blinkers {
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+    margin-bottom: 1rem;
+    padding: 0.5rem 0;
+}
+
+.blinker {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    background: var(--bg);
+    transition: all 0.15s ease;
+}
+
+.blinker.left {
+    flex-direction: row;
+}
+
+.blinker.right {
+    flex-direction: row-reverse;
+}
+
+.blinker svg {
+    width: 28px;
+    height: 28px;
+    transition: transform 0.15s ease;
+}
+
+.blinker.active {
+    color: #22c55e;
+    background: rgba(34, 197, 94, 0.15);
+    animation: blinker-flash 1s step-end infinite;
+}
+
+.blinker.active svg {
+    filter: drop-shadow(0 0 4px #22c55e);
+}
+
+/* Hazards - both blinkers on */
+.sei-blinkers.hazards .blinker.active {
+    color: #22c55e;
+    animation: blinker-flash 0.85s step-end infinite;
+}
+
+@keyframes blinker-flash {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.15;
+    }
+}
+
+/* Status indicators (legacy - now integrated into speed row) */
+
+/* ===== BUTTONS ===== */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    background: var(--border);
+    color: var(--text);
+}
+
+.btn:hover:not(:disabled) {
+    background: var(--bg-hover);
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: var(--accent);
+    color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+}
+
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.7rem;
+}
+
+.btn-sm.active {
+    background: var(--accent);
+    color: #fff;
+}
+
+.btn-icon {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+}
+
+.btn-icon:hover:not(:disabled) {
+    background: var(--accent-hover);
+}
+
+/* ===== SCROLLBAR ===== */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
+/* ===== SPEED SELECTOR ===== */
+.speed-selector {
+    display: flex;
+    gap: 0.125rem;
+    flex-shrink: 0;
+}
+
+.speed-btn {
+    font-size: 0.65rem;
+    padding: 0.2rem 0.4rem;
+    font-variant-numeric: tabular-nums;
+    min-width: 28px;
+}
+
+.speed-btn.active {
+    background: var(--accent);
+    color: #fff;
+}
+
+/* ===== CAMERA WIDGET ACTIONS ===== */
+.widget-actions {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    display: flex;
+    gap: 0.25rem;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 5;
+}
+
+.camera-widget:hover .widget-actions {
+    opacity: 1;
+}
+
+.action-btn {
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.75);
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+    flex-shrink: 0;
+}
+
+.action-btn:hover {
+    background: var(--accent);
+}
+
+.action-btn svg {
+    width: 14px;
+    height: 14px;
+    pointer-events: none;
+}
+
+/* ===== KEYBOARD SHORTCUTS MODAL ===== */
+.shortcuts-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.shortcuts-modal.hidden {
+    display: none;
+}
+
+.shortcuts-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(2px);
+}
+
+.shortcuts-content {
+    position: relative;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    min-width: 380px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.shortcuts-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.shortcuts-header h3 {
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.shortcuts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+}
+
+.shortcut-section {
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--accent);
+    margin-top: 0.75rem;
+    margin-bottom: 0.125rem;
+}
+
+.shortcut-section:first-child {
+    margin-top: 0;
+}
+
+.shortcut-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.shortcut-keys {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-shrink: 0;
+    min-width: 160px;
+}
+
+.shortcut-row span {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    text-align: right;
+}
+
+kbd {
+    display: inline-block;
+    padding: 0.15rem 0.4rem;
+    font-size: 0.68rem;
+    font-family: 'Segoe UI', monospace;
+    background: var(--bg);
+    border: 1px solid var(--text-muted);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    color: var(--text);
+    white-space: nowrap;
+}
+
+/* ===== EXPORT / TRIM BAR ===== */
+.export-bar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.5rem 1rem;
+    background: var(--bg-panel);
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+
+.export-bar.hidden {
+    display: none;
+}
+
+.trim-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.trim-set-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: #1a3a1a;
+    border: 1px solid #2d5a2d;
+    color: var(--success);
+}
+
+.trim-set-btn:hover:not(:disabled) {
+    background: #1e4a1e;
+}
+
+.trim-time-display {
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--text);
+    min-width: 42px;
+    text-align: center;
+    background: var(--bg);
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+}
+
+.trim-arrow {
+    color: var(--text-muted);
+    font-size: 1rem;
+}
+
+.trim-duration-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.trim-duration {
+    color: var(--accent);
+    border-color: rgba(31, 111, 235, 0.3);
+}
+
+#trimInDisplay.is-set,
+#trimOutDisplay.is-set {
+    color: var(--success);
+    border-color: rgba(34, 197, 94, 0.4);
+}
+
+.export-options {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.export-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+.export-select {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.export-select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.export-progress {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: 1;
+    min-width: 200px;
+}
+
+.export-progress.hidden {
+    display: none;
+}
+
+.progress-track {
+    flex: 1;
+    height: 6px;
+    background: var(--bg);
+    border-radius: 3px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+
+.progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent), #ff6b6b);
+    border-radius: 3px;
+    transition: width 0.2s ease-out;
+}
+
+.export-progress-label {
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    white-space: nowrap;
+    min-width: 160px;
+}
+
+#exportToggleBtn.active {
+    background: var(--accent);
+    color: #fff;
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 1000px) {
+    .sidebar {
+        width: 200px;
+    }
+    .sei-panel {
+        width: 180px;
+    }
+}
+
+@media (max-width: 800px) {
+    .main {
+        flex-direction: column;
+    }
+    .sidebar, .sei-panel {
+        width: 100%;
+        max-height: 150px;
+        border: none;
+        border-bottom: 1px solid var(--border);
+    }
+    .sei-panel {
+        border-bottom: none;
+        border-top: 1px solid var(--border);
+    }
+    .event-list {
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.5rem;
+        overflow-x: auto;
+    }
+    .event-item {
+        flex-shrink: 0;
+        margin-bottom: 0;
+    }
+}

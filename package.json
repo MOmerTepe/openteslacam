@@ -1,0 +1,53 @@
+{
+  "name": "openteslacam",
+  "version": "1.0.0",
+  "description": "Multi-camera Tesla dashcam viewer with vehicle data overlay",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win",
+    "build:all": "electron-builder --win --mac --linux"
+  },
+  "build": {
+    "appId": "com.openteslacam.app",
+    "productName": "OpenTeslaCam",
+    "copyright": "Copyright © 2026 MOmerTepe",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "asar": false,
+    "files": [
+      "index.html",
+      "viewer.js",
+      "viewer.css",
+      "main.js",
+      "assets/icon.png",
+      "!dashcam-master/**"
+    ],
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        { "target": "nsis",     "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] },
+        { "target": "zip",      "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "OpenTeslaCam"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "MOmerTepe",
+      "repo": "openteslacam"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.4.0",
+    "electron-builder": "^25.1.8"
+  }
+}
