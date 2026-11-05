@@ -1,0 +1,15 @@
+[package]
+name = "openteslacam"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = { version = "0.37.0", features = ["persistence"] }
+openh264 = "0.9.9"
+rfd = "0.17.2"
+serde_json = "1.0.154"
+walkers = "0.65.0"
+
+# openh264 is unusably slow unoptimized; keep deps fast in dev builds.
+[profile.dev.package."*"]
+opt-level = 3
