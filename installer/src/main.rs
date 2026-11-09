@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 const USAGE: &str = "usage:
   setup                                     open the installer
   setup --silent --dir <folder> [--desktop] [--tesla]
+  setup --silent                            update the installed app where it is
   uninstall --uninstall [--silent]";
 
 const MAGIC: &[u8; 8] = b"OTCSETUP";
@@ -69,9 +70,11 @@ fn main() -> ExitCode {
 }
 
 fn unattended(args: &[OsString], payload: ui::Payload) -> ExitCode {
+    // Without --dir, an existing install is updated where it is.
     let value = args.iter().position(|a| a == "--dir").and_then(|i| args.get(i + 1)).map(|d| d.to_string_lossy().into_owned());
+    let value = value.or_else(|| install::installed().map(|i| i.dir.display().to_string()));
     let (Some(typed), Some((stub, app))) = (value, payload) else {
-        eprintln!("{USAGE}\n(this exe needs --dir, and an app appended by scripts/build-installer.ps1)");
+        eprintln!("{USAGE}\n(this exe needs --dir when nothing is installed yet, and an app appended by scripts/build-installer.ps1)");
         return ExitCode::FAILURE;
     };
     let dir = match install::validate_dir(&typed) {

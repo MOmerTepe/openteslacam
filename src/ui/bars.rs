@@ -8,7 +8,7 @@ use super::settings::Layout;
 use super::theme::{self, BG, Face, Icon, LINE, LINE2, Look, Row, TEXT, TEXT3, centered_strip};
 use super::{map, timeline, vehicle};
 use crate::player::RATES;
-use eframe::egui::{Frame, Panel, Rect, Response, Ui, pos2, vec2};
+use eframe::egui::{Frame, OpenUrl, Panel, Rect, Response, Ui, pos2, vec2};
 
 const TOP_H: f32 = 56.0;
 const TRANSPORT_H: f32 = 36.0;
@@ -48,6 +48,13 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
         // Right side, from the window edge inwards.
         if theme::button(ui, row.right(32.0, 20.0), Face::Text("?"), Look::Normal, true, "Keyboard shortcuts").clicked() {
             app.shortcuts_open = true;
+        }
+        if let Some(v) = crate::update::available() {
+            let text = format!("update to {v}");
+            let w = theme::text_width(ui, &text, theme::mono(11.5)).ceil() + 24.0;
+            if theme::button(ui, row.right(w, 20.0), Face::Text(&text), Look::Primary, true, "Open the download page of the new version").clicked() {
+                ui.ctx().open_url(OpenUrl::new_tab(crate::update::RELEASE_PAGE));
+            }
         }
         if theme::text_button(ui, row.right(100.0, 20.0), "open folder", true).clicked() {
             app.pick_folder(ui.ctx());

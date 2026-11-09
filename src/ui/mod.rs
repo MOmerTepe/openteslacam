@@ -39,6 +39,7 @@ pub fn run(folder: Option<PathBuf>) -> Result<(), String> {
         options,
         Box::new(move |cc| {
             let settings = cc.storage.and_then(|s| s.get_string(settings::KEY)).map_or_else(Settings::default, |s| Settings::from_json(&s));
+            crate::update::check(cc.egui_ctx.clone());
             Ok(Box::new(App::new(&cc.egui_ctx, settings, folder)))
         }),
     )

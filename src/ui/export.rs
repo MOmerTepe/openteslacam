@@ -117,6 +117,8 @@ pub struct Dialog {
     hud: bool,
     map: bool,
     csv: bool,
+    /// Encode on the GPU; on by default each run, where the machine has a GPU encoder.
+    gpu: bool,
     /// Picked with "change"; until then the default name follows In.
     pub(super) dest: Option<PathBuf>,
     pub(super) running: Option<Running>,
@@ -126,7 +128,7 @@ pub struct Dialog {
 
 impl Default for Dialog {
     fn default() -> Self {
-        Dialog { open: false, composite: false, cams: [true; 6], res: 1, hud: true, map: true, csv: true, dest: None, running: None, outcome: None }
+        Dialog { open: false, composite: false, cams: [true; 6], res: 1, hud: true, map: true, csv: true, gpu: true, dest: None, running: None, outcome: None }
     }
 }
 
@@ -153,7 +155,7 @@ pub fn start(app: &mut App) {
     let d = &app.export;
     let mode = if d.composite {
         let (_, width, height, bps) = RESOLUTIONS[d.res];
-        Mode::Composite(Composite { width, height, bps, hud: d.hud, map: d.map, metric: app.settings.metric, cells: grid::current_cells(&app.settings, app.focus) })
+        Mode::Composite(Composite { width, height, bps, hud: d.hud, map: d.map, metric: app.settings.metric, cells: grid::current_cells(&app.settings, app.focus), gpu: d.gpu })
     } else {
         Mode::Lossless(d.cams)
     };
@@ -352,6 +354,20 @@ fn contents(ui: &mut Ui, app: &mut App) -> Step {
         }
         check(ui, r.left(156.0, 18.0), "vehicle-data strip", &mut d.hud);
         check(ui, r.left(60.0, 0.0), "map", &mut d.map);
+        // Machines without a GPU encoder don't get the choice: they always encode on the CPU.
+        if let Some(name) = export::gpu_encoder() {
+            ui.add_space(18.0);
+            legend(ui, "encoder");
+            ui.add_space(6.0);
+            let mut r = Row::new(row(ui, BTN_H));
+            let labels = ["gpu", "cpu"];
+            let w = theme::toggles_width(ui, &labels, 12.0);
+            if let Some(i) = theme::toggles(ui, r.left(w, 18.0), &labels, Some(usize::from(!d.gpu)), 12.0) {
+                d.gpu = i == 0;
+            }
+            let about = if d.gpu { name } else { "slower, leaves the graphics card free" };
+            theme::label(ui.painter(), r.rest.left_center(), about, theme::mono(11.0), TEXT3, r.rest.width());
+        }
     } else {
         legend(ui, "cameras");
         ui.add_space(10.0);

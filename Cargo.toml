@@ -9,19 +9,22 @@ members = ["installer"]
 
 # One version for the app and its installer. scripts/build-installer.ps1 reads it too.
 [workspace.package]
-version = "2.0.0"
+version = "2.0.1"
 license = "MIT"
 
 [dependencies]
 bytemuck = { version = "1.25.2", features = ["extern_crate_alloc"] }
 eframe = { version = "0.37.0", features = ["persistence"] }
 openh264 = "0.9.9"
+# Both already come with walkers (map tiles); named here for the update check, with no new features.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 rfd = "0.17.2"
 serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["rt"] }
 walkers = "0.65.0"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62.2", features = ["Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi_Common", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_LibraryLoader"] }
+windows = { version = "0.62.2", features = ["Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi_Common", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Ole", "Win32_System_Variant"] }
 
 # openh264 is unusably slow unoptimized; keep deps fast in dev builds.
 [profile.dev.package."*"]

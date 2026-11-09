@@ -1,7 +1,8 @@
 //! Windows' own H.264 decoder (Media Foundation), for the viewer: openh264 can't keep up with an
 //! HW4 front stream in busy scenes. With a D3D11 device it decodes on the GPU, and pictures come
 //! back to memory only when shown. The DLLs are missing on Windows N and some Server editions;
-//! `MfDecoder::new` fails there and the caller moves on (build.rs delay-loads them).
+//! `MfDecoder::new` fails there and the caller moves on (build.rs delay-loads them). Export encodes
+//! on the GPU's H.264 encoder through it too (`MfEncoder`), where the machine has one.
 
 use crate::mp4::Track;
 use std::cell::{OnceCell, RefCell};
@@ -14,8 +15,9 @@ use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::IDXGIAdapter;
 use windows::Win32::Media::MediaFoundation::*;
-use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx};
+use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree};
 use windows::Win32::System::LibraryLoader::LoadLibraryW;
+use windows::Win32::System::Variant::{VARIANT, VT_UI4};
 use windows::core::{Error, GUID, Interface, Result, w};
 
 /// CLSID_CMSH264DecoderMFT from wmcodecdsp.h.
@@ -499,6 +501,252 @@ impl MfDecoder {
         self.drain().map_err(e)?;
         self.flushed = self.ready.drain(..).collect();
         Ok(&self.flushed)
+    }
+}
+
+/// The GPU's H.264 encoders (NVENC, AMF, Quick Sync behind Media Foundation), best first. Needs COM
+/// on the calling thread.
+fn hardware_encoders() -> Vec<IMFActivate> {
+    if !startup() {
+        return Vec::new();
+    }
+    let ty = |subtype| MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: subtype };
+    let (input, output) = (ty(MFVideoFormat_NV12), ty(MFVideoFormat_H264));
+    let (mut list, mut n) = (std::ptr::null_mut(), 0);
+    // Safety: valid type infos and out-pointers. Each entry is taken out of the array, which is then
+    // freed as MFTEnumEx's contract says.
+    unsafe {
+        let flags = MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER;
+        if MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, flags, Some(&input), Some(&output), &mut list, &mut n).is_err() || list.is_null() {
+            return Vec::new();
+        }
+        let found = std::slice::from_raw_parts_mut(list, n as usize).iter_mut().filter_map(Option::take).collect();
+        CoTaskMemFree(Some(list as *const _));
+        found
+    }
+}
+
+/// The name of the GPU's H.264 encoder, if Media Foundation lists one. Looked up once, on a thread of
+/// its own so the UI thread's COM apartment is left alone.
+pub fn hardware_encoder() -> Option<&'static str> {
+    static NAME: OnceLock<Option<String>> = OnceLock::new();
+    NAME.get_or_init(|| {
+        std::thread::spawn(|| {
+            // Safety: COM for this short-lived thread; the string is copied before it's freed.
+            unsafe {
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+                let a = hardware_encoders().into_iter().next()?;
+                let (mut s, mut len) = (windows::core::PWSTR::null(), 0);
+                a.GetAllocatedString(&MFT_FRIENDLY_NAME_Attribute, &mut s, &mut len).ok()?;
+                let name = s.to_string().ok();
+                CoTaskMemFree(Some(s.0 as *const _));
+                Some(name.unwrap_or_else(|| "GPU encoder".to_owned()))
+            }
+        })
+        .join()
+        .ok()
+        .flatten()
+    })
+    .as_deref()
+}
+
+/// Sets an encoder property to a number.
+unsafe fn set_u32(api: &ICodecAPI, key: &GUID, n: u32) -> Result<()> {
+    let mut v = VARIANT::default();
+    // Safety: a VT_UI4 variant holds its value in ulVal; it owns nothing to free.
+    unsafe {
+        (*v.Anonymous.Anonymous).vt = VT_UI4;
+        (*v.Anonymous.Anonymous).Anonymous.ulVal = n;
+        api.SetValue(key, &v)
+    }
+}
+
+/// H.264 on the GPU, for export: NV12 pictures in, Annex-B access units out. Hardware encoders are
+/// asynchronous, so a picture comes out some calls after it went in, and the GPU encodes while the
+/// caller composes the next frame.
+pub struct MfEncoder {
+    mft: IMFTransform,
+    events: IMFMediaEventGenerator,
+    /// Input the encoder asked for and hasn't had.
+    wanted: u32,
+    /// Times of pictures sent and not back yet: they must come back in this order (no B-frames).
+    sent: VecDeque<i64>,
+    /// Where output goes, unless the encoder provides its own samples.
+    output: Option<IMFSample>,
+    nv12_len: usize,
+}
+
+impl MfEncoder {
+    /// The first hardware encoder that takes these settings; the error of the last one tried if none.
+    pub fn new(width: u32, height: u32, bps: u32, fps: u32) -> Result<MfEncoder> {
+        // Safety: COM stays initialized for the export thread.
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        }
+        let mut last = Error::from_hresult(MF_E_NOT_FOUND);
+        for a in hardware_encoders() {
+            match Self::with(&a, width, height, bps, fps) {
+                Ok(e) => return Ok(e),
+                Err(e) => last = e,
+            }
+        }
+        Err(last)
+    }
+
+    fn with(a: &IMFActivate, width: u32, height: u32, bps: u32, fps: u32) -> Result<MfEncoder> {
+        // Safety: COM calls with valid arguments; the media types outlive the calls that take them.
+        unsafe {
+            let mft: IMFTransform = a.ActivateObject()?;
+            mft.GetAttributes()?.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1)?;
+            let events: IMFMediaEventGenerator = mft.cast()?;
+            let video = |subtype: &GUID| -> Result<IMFMediaType> {
+                let t = MFCreateMediaType()?;
+                t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+                t.SetGUID(&MF_MT_SUBTYPE, subtype)?;
+                t.SetUINT64(&MF_MT_FRAME_SIZE, (width as u64) << 32 | height as u64)?;
+                t.SetUINT64(&MF_MT_FRAME_RATE, (fps as u64) << 32 | 1)?;
+                t.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, 1 << 32 | 1)?;
+                t.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
+                Ok(t)
+            };
+            // No B-frames: pictures must come out in the order they went in, as the muxer takes them.
+            // An encoder that can't be told so isn't used. A keyframe every second, as openh264's.
+            let api: ICodecAPI = mft.cast()?;
+            if api.IsSupported(&CODECAPI_AVEncMPVDefaultBPictureCount).is_ok() {
+                set_u32(&api, &CODECAPI_AVEncMPVDefaultBPictureCount, 0)?;
+            }
+            let _ = set_u32(&api, &CODECAPI_AVEncMPVGOPSize, fps);
+            // Encoders take the output type first. High, not Baseline: NVENC's Baseline has CAVLC
+            // escapes only High allows, which openh264 can't read.
+            let out = video(&MFVideoFormat_H264)?;
+            out.SetUINT32(&MF_MT_AVG_BITRATE, bps)?;
+            out.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as u32)?;
+            mft.SetOutputType(0, &out, 0)?;
+            let input = video(&MFVideoFormat_NV12)?;
+            input.SetUINT32(&MF_MT_DEFAULT_STRIDE, width)?;
+            mft.SetInputType(0, &input, 0)?;
+            let info = mft.GetOutputStreamInfo(0)?;
+            let output = if info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32 != 0 {
+                None
+            } else {
+                let sample = MFCreateSample()?;
+                sample.AddBuffer(&MFCreateMemoryBuffer(info.cbSize)?)?;
+                Some(sample)
+            };
+            mft.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
+            mft.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
+            let nv12_len = width as usize * height as usize * 3 / 2;
+            Ok(MfEncoder { mft, events, wanted: 0, sent: VecDeque::new(), output, nv12_len })
+        }
+    }
+
+    /// Sends one NV12 picture (`width` stride) at `time` for `dur` (100 ns units). Returns the access
+    /// units that came out meanwhile, oldest first.
+    // shortcut: waits on the encoder's events without a timeout, so a driver that stops answering hangs the export; add one if that's ever seen.
+    pub fn encode(&mut self, nv12: &[u8], time: i64, dur: i64) -> Result<Vec<Vec<u8>>> {
+        if nv12.len() != self.nv12_len {
+            return Err(Error::from_hresult(MF_E_INVALIDMEDIATYPE));
+        }
+        let mut out = Vec::new();
+        while self.wanted == 0 {
+            // Safety: a blocking wait on the encoder's own event queue.
+            let e = unsafe { self.events.GetEvent(MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS(0)) }?;
+            self.on(&e, &mut out)?;
+        }
+        // Safety: the buffer is locked only while copying `nv12`, which fits its allocation.
+        unsafe {
+            let buffer = MFCreateMemoryBuffer(nv12.len() as u32)?;
+            let mut p = std::ptr::null_mut();
+            buffer.Lock(&mut p, None, None)?;
+            std::ptr::copy_nonoverlapping(nv12.as_ptr(), p, nv12.len());
+            buffer.Unlock()?;
+            buffer.SetCurrentLength(nv12.len() as u32)?;
+            let sample = MFCreateSample()?;
+            sample.AddBuffer(&buffer)?;
+            sample.SetSampleTime(time)?;
+            sample.SetSampleDuration(dur)?;
+            self.mft.ProcessInput(0, &sample, 0)?;
+        }
+        self.wanted -= 1;
+        self.sent.push_back(time);
+        loop {
+            // Safety: as above, without waiting.
+            match unsafe { self.events.GetEvent(MF_EVENT_FLAG_NO_WAIT) } {
+                Ok(e) => self.on(&e, &mut out)?,
+                Err(e) if e.code() == MF_E_NO_EVENTS_AVAILABLE => return Ok(out),
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// The access units still in the encoder; call after the last picture.
+    pub fn finish(&mut self) -> Result<Vec<Vec<u8>>> {
+        let mut out = Vec::new();
+        // Safety: messages without parameters, then blocking waits on the event queue.
+        unsafe {
+            self.mft.ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0)?;
+            self.mft.ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0)?;
+            loop {
+                let e = self.events.GetEvent(MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS(0))?;
+                if e.GetType()? == METransformDrainComplete.0 as u32 {
+                    e.GetStatus()?.ok()?;
+                    return Ok(out);
+                }
+                self.on(&e, &mut out)?;
+            }
+        }
+    }
+
+    fn on(&mut self, e: &IMFMediaEvent, out: &mut Vec<Vec<u8>>) -> Result<()> {
+        // Safety: getters on a live event.
+        let (ty, status) = unsafe { (e.GetType()?, e.GetStatus()?) };
+        status.ok()?;
+        let ty = MF_EVENT_TYPE(ty as i32);
+        if ty == METransformNeedInput {
+            self.wanted += 1;
+        } else if ty == METransformHaveOutput {
+            out.push(self.take()?);
+        }
+        Ok(())
+    }
+
+    /// One access unit, once the encoder said it has it.
+    fn take(&mut self) -> Result<Vec<u8>> {
+        loop {
+            let mut buf = MFT_OUTPUT_DATA_BUFFER { pSample: std::mem::ManuallyDrop::new(self.output.clone()), ..Default::default() };
+            // Safety: as in `MfDecoder::drain`.
+            let (r, sample) = unsafe {
+                if let Some(s) = &self.output {
+                    s.GetBufferByIndex(0)?.SetCurrentLength(0)?;
+                }
+                let mut status = 0;
+                let r = self.mft.ProcessOutput(0, std::slice::from_mut(&mut buf), &mut status);
+                std::mem::ManuallyDrop::drop(&mut buf.pEvents);
+                (r, std::mem::ManuallyDrop::take(&mut buf.pSample))
+            };
+            match r {
+                // The encoder settled its output format: take it and ask again.
+                // Safety: a type the encoder offered.
+                Err(e) if e.code() == MF_E_TRANSFORM_STREAM_CHANGE => unsafe { self.mft.SetOutputType(0, &self.mft.GetOutputAvailableType(0, 0)?, 0)? },
+                Err(e) => return Err(e),
+                Ok(()) => {
+                    let sample = sample.ok_or_else(Error::empty)?;
+                    // Safety: the locked slice covers what Lock says, and is copied before Unlock.
+                    let (time, data) = unsafe {
+                        let buffer = sample.ConvertToContiguousBuffer()?;
+                        let (mut p, mut len) = (std::ptr::null_mut(), 0);
+                        buffer.Lock(&mut p, None, Some(&mut len))?;
+                        let data = std::slice::from_raw_parts(p, len as usize).to_vec();
+                        buffer.Unlock()?;
+                        (sample.GetSampleTime()?, data)
+                    };
+                    if self.sent.pop_front() != Some(time) {
+                        return Err(Error::new(MF_E_INVALIDMEDIATYPE, "the GPU encoder put pictures out of order"));
+                    }
+                    return Ok(data);
+                }
+            }
+        }
     }
 }
 

@@ -2937,20 +2937,22 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
 name = "openteslacam"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bytemuck",
  "eframe",
  "openh264",
+ "reqwest",
  "rfd",
  "serde_json",
+ "tokio",
  "walkers",
  "windows",
 ]
 
 [[package]]
 name = "openteslacam-setup"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "eframe",
  "rfd",

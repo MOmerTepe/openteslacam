@@ -14,7 +14,7 @@ use crate::ui::{grid, theme};
 use eframe::egui::epaint::{Mesh, Primitive, Vertex};
 use eframe::egui::{Color32, Context, Pos2, RawInput, Rect, TextureId, Ui, pos2, vec2};
 use openh264::encoder::FrameType;
-use openh264::formats::{RgbaSliceU8, YUVBuffer};
+use openh264::formats::{RgbaSliceU8, YUVBuffer, YUVSource};
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::ops::Range;
@@ -97,6 +97,93 @@ pub struct Composite {
     pub metric: bool,
     /// (camera, grid cell), bottom first.
     pub cells: Vec<(usize, grid::Cell)>,
+    /// Encode on the GPU when it can; the CPU otherwise.
+    pub gpu: bool,
+}
+
+/// The GPU's H.264 encoder, when this machine has one export can use.
+pub fn gpu_encoder() -> Option<&'static str> {
+    #[cfg(windows)]
+    return crate::mf::hardware_encoder();
+    #[cfg(not(windows))]
+    None
+}
+
+/// An encoded picture: AVCC sample, and whether it's a keyframe.
+type Picture = (Vec<u8>, bool);
+
+/// What turns composited frames into H.264.
+enum Encoder {
+    Cpu(openh264::encoder::Encoder),
+    /// With its NV12 buffer.
+    #[cfg(windows)]
+    Gpu(crate::mf::MfEncoder, Vec<u8>),
+}
+
+impl Encoder {
+    /// The GPU's encoder if `gpu` and it takes these settings, else openh264 and, if the GPU was
+    /// wanted, a note on why not.
+    fn new(gpu: bool, w: usize, h: usize, bps: u32) -> Result<(Encoder, Option<String>), String> {
+        let mut note = None;
+        #[cfg(windows)]
+        if gpu {
+            match crate::mf::MfEncoder::new(w as u32, h as u32, bps, fixture::FPS) {
+                Ok(e) => return Ok((Encoder::Gpu(e, Vec::new()), None)),
+                Err(e) => note = Some(format!("GPU encoder not available ({}), encoded on the CPU", e.message())),
+            }
+        }
+        let _ = gpu;
+        let cpu = fixture::new_encoder(bps).map_err(|e| format!("encoder {w}x{h}: {e}"))?;
+        Ok((Encoder::Cpu(cpu), note))
+    }
+
+    /// Sends one frame, at `time` for `dur` in 100 ns units. Returns the pictures that came out, in
+    /// order; parameter sets go to `sps` and `pps`.
+    fn encode(&mut self, yuv: &YUVBuffer, time: i64, dur: i64, sps: &mut Vec<u8>, pps: &mut Vec<u8>) -> Result<Vec<Picture>, String> {
+        match self {
+            Encoder::Cpu(enc) => {
+                let (w, h) = yuv.dimensions();
+                let bs = enc.encode(yuv).map_err(|e| format!("encoder {w}x{h}: {e}"))?;
+                let mut sample = Vec::new();
+                fixture::take_nals(&bs, &mut sample, sps, pps);
+                if sample.is_empty() {
+                    return Err(format!("encoder {w}x{h} produced no picture"));
+                }
+                Ok(vec![(sample, bs.frame_type() == FrameType::IDR)])
+            }
+            #[cfg(windows)]
+            Encoder::Gpu(enc, nv12) => {
+                // openh264's colour conversion, then its U and V planes interleaved.
+                nv12.clear();
+                nv12.extend_from_slice(yuv.y());
+                nv12.extend(yuv.u().iter().zip(yuv.v()).flat_map(|(&u, &v)| [u, v]));
+                let units = enc.encode(nv12, time, dur).map_err(|e| format!("GPU encoder: {}", e.message()))?;
+                Ok(units.iter().map(|u| picture(u, sps, pps)).collect())
+            }
+        }
+    }
+
+    /// Pictures still in the encoder; call after the last frame.
+    fn finish(&mut self, sps: &mut Vec<u8>, pps: &mut Vec<u8>) -> Result<Vec<Picture>, String> {
+        match self {
+            Encoder::Cpu(_) => Ok(Vec::new()),
+            #[cfg(windows)]
+            Encoder::Gpu(enc, _) => Ok(enc.finish().map_err(|e| format!("GPU encoder: {}", e.message()))?.iter().map(|u| picture(u, sps, pps)).collect()),
+        }
+    }
+}
+
+/// An Annex-B access unit as a sample; keyframes are the ones with an IDR slice. Delimiters go: MP4
+/// doesn't need them, and openh264 refuses one after the SPS and PPS decoders put before keyframes.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn picture(unit: &[u8], sps: &mut Vec<u8>, pps: &mut Vec<u8>) -> Picture {
+    let mut sample = Vec::new();
+    let mut key = false;
+    for nal in fixture::annex_b_nals(unit).into_iter().filter(|n| n[0] & 0x1F != 9) {
+        key |= nal[0] & 0x1F == 5;
+        fixture::put_nal(nal, &mut sample, sps, pps);
+    }
+    (sample, key)
 }
 
 pub enum Mode {
@@ -450,11 +537,24 @@ impl Chrome {
         }
         out.textures_delta.clear();
         let mut canvas = Bitmap { w, h, px: vec![theme::BG.to_array(); w * h] };
-        for prim in self.ctx.tessellate(out.shapes, out.pixels_per_point) {
-            if let Primitive::Mesh(mesh) = &prim.primitive {
-                self.fill(&mut canvas, mesh, prim.clip_rect, out.pixels_per_point);
+        let prims = self.ctx.tessellate(out.shapes, out.pixels_per_point);
+        // Horizontal stripes, one per core: each draws every mesh in order, clipped to its rows, so
+        // the picture is the same as drawn on one thread. At 4K this was a third of export time.
+        let threads = thread::available_parallelism().map_or(1, |n| n.get());
+        let rows = h.div_ceil(threads).max(16);
+        let this = &*self;
+        thread::scope(|s| {
+            for (k, stripe) in canvas.px.chunks_mut(rows * w.max(1)).enumerate() {
+                let prims = &prims;
+                s.spawn(move || {
+                    for prim in prims {
+                        if let Primitive::Mesh(mesh) = &prim.primitive {
+                            this.fill(stripe, w, k * rows, mesh, prim.clip_rect, out.pixels_per_point);
+                        }
+                    }
+                });
             }
-        }
+        });
         canvas
     }
 
@@ -471,10 +571,12 @@ impl Chrome {
         }
     }
 
-    fn fill(&self, out: &mut Bitmap, mesh: &Mesh, clip: Rect, ppp: f32) {
+    /// Draws `mesh` into `px`: rows `top..` of a `w` wide canvas, nothing outside them.
+    fn fill(&self, px: &mut [[u8; 4]], w: usize, top: usize, mesh: &Mesh, clip: Rect, ppp: f32) {
         let [tw, th] = self.atlas_size;
-        let (cx0, cy0) = ((clip.min.x * ppp).floor().max(0.0) as usize, (clip.min.y * ppp).floor().max(0.0) as usize);
-        let (cx1, cy1) = (((clip.max.x * ppp).ceil().max(0.0) as usize).min(out.w), ((clip.max.y * ppp).ceil().max(0.0) as usize).min(out.h));
+        let bottom = top + px.len() / w.max(1);
+        let (cx0, cy0) = ((clip.min.x * ppp).floor().max(0.0) as usize, ((clip.min.y * ppp).floor().max(0.0) as usize).max(top));
+        let (cx1, cy1) = (((clip.max.x * ppp).ceil().max(0.0) as usize).min(w), ((clip.max.y * ppp).ceil().max(0.0) as usize).min(bottom));
         let at = |v: &Vertex| pos2(v.pos.x * ppp, v.pos.y * ppp);
         let edge = |a: Pos2, b: Pos2, c: Pos2| (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
         for tri in mesh.indices.as_chunks::<3>().0 {
@@ -498,7 +600,7 @@ impl Chrome {
                     let tex = self.atlas.get(((v * th as f32) as usize).min(th.saturating_sub(1)) * tw + ((u * tw as f32) as usize).min(tw.saturating_sub(1))).copied().unwrap_or(Color32::WHITE);
                     let channel = |i: usize| (wa * va.color[i] as f32 + wb * vb.color[i] as f32 + wc * vc.color[i] as f32) * tex[i] as f32 / 255.0;
                     let src = [channel(0), channel(1), channel(2), channel(3)];
-                    let dst = &mut out.px[y * out.w + x];
+                    let dst = &mut px[(y - top) * w + x];
                     for i in 0..4 {
                         dst[i] = (src[i] + dst[i] as f32 * (1.0 - src[3] / 255.0)).round().min(255.0) as u8;
                     }
@@ -666,14 +768,31 @@ fn composite(job: &Job, c: &Composite, store: &Store, parts: &mut Parts, notes: 
         .collect();
     let mut streams: Vec<Stream> = places.iter().map(|t| Stream::new(t.cam, &job.event)).collect();
 
-    let enc_err = |e: openh264::Error| format!("encoder {w}x{h}: {e}");
-    let mut enc = fixture::new_encoder(c.bps).map_err(enc_err)?;
+    let (mut enc, note) = Encoder::new(c.gpu, w, h, c.bps)?;
+    notes.extend(note);
     let mut yuv = YUVBuffer::new(w, h);
     let mut canvas = vec![theme::BG.to_array(); w * h];
     let part = parts.add(named(&job.base, ".mp4"));
     let err = io_err(&part);
     let mut mux: Option<Muxer> = None;
     let (mut sps, mut pps) = (Vec::new(), Vec::new());
+    // Durations of frames sent and not muxed yet: a GPU encoder gives pictures back later.
+    let mut waiting = std::collections::VecDeque::new();
+    let mut put = |pics: Vec<Picture>, sps: &[u8], pps: &[u8], waiting: &mut std::collections::VecDeque<u32>| -> Result<(), String> {
+        for (sample, key) in pics {
+            if mux.is_none() {
+                if sps.len() < 4 || pps.is_empty() {
+                    return Err(format!("encoder {w}x{h} produced no SPS/PPS"));
+                }
+                mux = Some(Muxer::create(&part, TIMESCALE, w as u32, h as u32, &fixture::avcc_of(sps, pps)).map_err(&err)?);
+            }
+            let dur = waiting.pop_front().ok_or_else(|| format!("encoder {w}x{h} returned more pictures than it was given"))?;
+            mux.as_mut().expect("just made").push(&sample, dur, 0, key).map_err(&err)?;
+        }
+        Ok(())
+    };
+    // 100 ns units, as Media Foundation counts.
+    let (mut ticks, hns) = (0u64, |t: u64| (t * 10_000_000 / TIMESCALE as u64) as i64);
     let wall0 = job.event.segments[0].start as f64;
 
     for (i, &t) in times.iter().enumerate() {
@@ -706,21 +825,16 @@ fn composite(job: &Job, c: &Composite, store: &Store, parts: &mut Parts, notes: 
             blit(&mut canvas, w, &bmp, 0, h - band_h as usize);
         }
         yuv.read_rgba8(RgbaSliceU8::new(canvas.as_flattened(), (w, h)));
-        let bs = enc.encode(&yuv).map_err(enc_err)?;
-        let key = bs.frame_type() == FrameType::IDR;
-        let mut sample = Vec::new();
-        fixture::take_nals(&bs, &mut sample, &mut sps, &mut pps);
-        if sample.is_empty() {
-            return Err(format!("encoder {w}x{h} produced no picture for frame {i}"));
-        }
-        if mux.is_none() {
-            if sps.len() < 4 || pps.is_empty() {
-                return Err(format!("encoder {w}x{h} produced no SPS/PPS"));
-            }
-            mux = Some(Muxer::create(&part, TIMESCALE, w as u32, h as u32, &fixture::avcc_of(&sps, &pps)).map_err(&err)?);
-        }
-        mux.as_mut().expect("just made").push(&sample, durs[i], 0, key).map_err(&err)?;
+        let pics = enc.encode(&yuv, hns(ticks), hns(ticks + durs[i] as u64) - hns(ticks), &mut sps, &mut pps)?;
+        ticks += durs[i] as u64;
+        waiting.push_back(durs[i]);
+        put(pics, &sps, &pps, &mut waiting)?;
         progress((i + 1) as f32 / times.len() as f32);
+    }
+    let pics = enc.finish(&mut sps, &mut pps)?;
+    put(pics, &sps, &pps, &mut waiting)?;
+    if !waiting.is_empty() {
+        return Err(format!("encoder {w}x{h} lost {} pictures", waiting.len()));
     }
     mux.ok_or("no footage in this range")?.finish().map_err(&err)?;
     notes.extend(streams.into_iter().filter_map(|s| Some(format!("{}: {}", CAMERAS[s.cam], s.note?))));
@@ -1134,6 +1248,8 @@ mod tests {
         let at = |x: usize, y: usize| b.px[y * b.w + x];
         assert_eq!((b.w, b.h), (150, 60));
         assert_eq!(at(10, 10), theme::TEXT.to_array());
+        // Across the 16-row stripes drawn on separate threads, with no seam. (Row 0 has a few edge pixels off, as it always had.)
+        assert!((1..45).all(|y| (0..60).all(|x| at(x, y) == theme::TEXT.to_array())), "the rect is whole");
         assert_eq!(at(58, 10), theme::TEXT.to_array(), "40 points is 60 pixels");
         assert_eq!(at(62, 10), theme::BG.to_array());
         assert_eq!(at(10, 50), theme::BG.to_array());
@@ -1155,9 +1271,48 @@ mod tests {
         }
     }
 
+    #[test]
+    fn annex_b_splits_into_nals() {
+        let au = [0, 0, 0, 1, 0x67, 1, 2, 0, 0, 1, 0x68, 3, 0, 0, 1, 0x09, 0xf0, 0, 0, 0, 1, 0x65, 0, 0, 3, 0, 9, 0, 0];
+        let nals = fixture::annex_b_nals(&au);
+        assert_eq!(nals, [&[0x67, 1, 2][..], &[0x68, 3], &[0x09, 0xf0], &[0x65, 0, 0, 3, 0, 9]]);
+        let (mut sps, mut pps) = (Vec::new(), Vec::new());
+        let (sample, key) = picture(&au, &mut sps, &mut pps);
+        assert!(key);
+        assert_eq!((sps.as_slice(), pps.as_slice()), (&[0x67, 1, 2][..], &[0x68, 3][..]));
+        assert_eq!(sample, [0, 0, 0, 6, 0x65, 0, 0, 3, 0, 9]);
+        assert!(!picture(&[0, 0, 1, 0x41, 7], &mut sps, &mut pps).1, "a P slice isn't a keyframe");
+    }
+
+    /// The GPU path where the machine has an encoder, the CPU with a note where it hasn't.
+    #[test]
+    fn gpu_export_decodes_back_or_falls_back() {
+        let (root, out) = fixture_dirs("gpu");
+        let ev = event(&root, Kind::Saved);
+        for (w, h) in [(640, 360), (1920, 1080)] {
+            let Mode::Composite(c) = composite_mode(w, h, true) else { unreachable!() };
+            let done = run(&job(ev.clone(), 0.0, 2.5, out.join(format!("g{w}")), Mode::Composite(Composite { gpu: true, ..c }), false), &AtomicBool::new(false), |_| {}).unwrap();
+            if gpu_encoder().is_some() {
+                assert!(done.notes.is_empty(), "{w}x{h}: {:?}", done.notes);
+            } else {
+                assert!(done.notes[0].starts_with("GPU encoder not available"), "{:?}", done.notes);
+            }
+            let (n, top, bottom, t) = decode_all(&done.files[0]);
+            assert_eq!((t.width, t.height), (w, h));
+            assert_eq!((t.samples.len(), n), (91, 91), "every frame, each decodes");
+            let keys: Vec<usize> = (0..91).filter(|&i| t.samples[i].key).collect();
+            assert_eq!(keys[0], 0);
+            assert!(keys.windows(2).all(|k| k[1] - k[0] <= fixture::FPS as usize), "a keyframe at least every second: {keys:?}");
+            assert!(top > 60 && bottom > 150, "cameras {top}, strip {bottom}");
+            let total = t.samples.iter().map(|s| s.dur as u64).sum::<u64>() as f64 / t.timescale as f64;
+            assert!((total - 91.0 / 36.0).abs() < 0.01, "plays in source time: {total}");
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
     fn composite_mode(width: u32, height: u32, hud: bool) -> Mode {
         let cells = (0..6).map(|c| (c, [(c % 3) as f32 * 4.0, (c / 3) as f32 * 4.0, 4.0, 4.0])).collect();
-        Mode::Composite(Composite { width, height, bps: 4_000_000, hud, map: hud, metric: true, cells })
+        Mode::Composite(Composite { width, height, bps: 4_000_000, hud, map: hud, metric: true, cells, gpu: false })
     }
 
     /// (frames decoded, brightest pixel in the picture's top part, brightest in the bottom 5 %).

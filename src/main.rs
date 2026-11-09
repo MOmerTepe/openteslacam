@@ -18,6 +18,7 @@ mod player;
 mod sei;
 mod telemetry;
 mod ui;
+mod update;
 
 use std::ffi::OsString;
 use std::io::{self, BufWriter, Write};

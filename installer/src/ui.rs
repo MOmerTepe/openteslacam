@@ -76,6 +76,8 @@ struct App {
     dir: String,
     desktop: bool,
     tesla: bool,
+    /// What's installed already, found through Windows' installed-apps entry.
+    installed: Option<install::Installed>,
     checks: Option<Result<Vec<Check>, String>>,
     checks_rx: Option<Receiver<Result<Vec<Check>, String>>>,
     tasks: Vec<(Task, State)>,
@@ -87,8 +89,10 @@ struct App {
 
 impl App {
     fn new(mode: Mode, ctx: egui::Context) -> App {
+        let installed = matches!(mode, Mode::Install(_)).then(install::installed).flatten();
         let (uninstall_dir, payload, page, dir) = match mode {
-            Mode::Install(payload) => (None, payload, Page::Options, install::default_dir()),
+            // An update goes where the app already is, whatever folder that was.
+            Mode::Install(payload) => (None, payload, Page::Options, installed.as_ref().map_or_else(install::default_dir, |i| i.dir.display().to_string())),
             Mode::Uninstall(dir) => {
                 let shown = dir.display().to_string();
                 (Some(dir), None, Page::Confirm, shown)
@@ -100,8 +104,10 @@ impl App {
             payload,
             page,
             dir,
-            desktop: true,
+            // An update leaves the desktop as it was: a shortcut there stays, and none is added.
+            desktop: installed.is_none(),
             tesla: false,
+            installed,
             checks: None,
             checks_rx: None,
             tasks: Vec::new(),
@@ -285,7 +291,15 @@ impl App {
         let mut row = Row::new(foot);
         let reinstall = dir.as_ref().is_ok_and(|d| d.join(install::APP_EXE).exists());
         let can_install = self.payload.is_some() && dir.is_ok() && self.checks_rx.is_none() && self.checks.is_some() && !windows_fails;
-        let word = if reinstall { "reinstall" } else { "install" };
+        // The installed one, if that's the folder being installed to and it's another version.
+        let from = self.installed.as_ref().filter(|i| reinstall && dir.as_ref().is_ok_and(|d| *d == i.dir) && i.version != env!("CARGO_PKG_VERSION"));
+        let word = if from.is_some() {
+            "update"
+        } else if reinstall {
+            "reinstall"
+        } else {
+            "install"
+        };
         if theme::button(ui, row.right(92.0, 8.0), Face::Text(word), Look::Primary, can_install, word).clicked() {
             if let Ok(d) = dir.clone() {
                 self.start_install(d);
@@ -301,6 +315,8 @@ impl App {
             e.clone()
         } else if windows_fails {
             "this version of Windows isn't supported".to_string()
+        } else if let Some(i) = from {
+            format!("updates {} to {}; settings and saved layouts stay", i.version, env!("CARGO_PKG_VERSION"))
         } else if reinstall {
             "replaces the installed app; settings and saved layouts stay".to_string()
         } else {

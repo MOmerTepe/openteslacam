@@ -20,6 +20,15 @@ decrypt or play those clips.** They aren't real MP4 files, and only the car that
 To use your footage here, turn encryption off in the car: **Controls → Safety → Encrypt Dashcam Recordings**.
 Clips recorded after that are normal MP4s. Clips already encrypted stay unreadable.
 
+## What's new in 2.0.1
+
+- **Hardware-accelerated export:** a composited export encodes on the graphics card where the machine has a GPU
+  encoder, and draws the vehicle-data strip on every CPU core. A 4K export takes less than half the time it did
+  in 2.0.0. The export dialog has a `cpu` choice for when the graphics card is busy. See
+  [Requirements](#requirements).
+- **Updates:** the app says when a newer version is out (`update to …` in the top bar), and setup updates an
+  existing install in place, in whatever folder it's in.
+
 ## What's new in 2.0
 
 | | 1.x | 2.0 |
@@ -45,7 +54,7 @@ carry over.
 | **Graphics** | A driver with DirectX 12, Vulkan or OpenGL ES support |
 | **Footage** | Unencrypted TeslaCam clips (see above) |
 | **Vehicle data and map** | Clips from firmware 2025.44.25 or later on HW3 or newer. Older clips still play, and parked cars may record no vehicle data |
-| **Internet** | Only for map tiles. Everything else works offline |
+| **Internet** | Only for map tiles and the check for a newer version. Everything else works offline |
 
 Nothing else needs installing. The video decoder and vehicle-data parser are built in, and there's no VC++
 Redistributable, FFmpeg, Python or Node involved.
@@ -57,12 +66,22 @@ slower machine it may skip between keyframes at 2× too. To measure your machine
 `openteslacam --bench-decode <folder>` on some clips. If video looks wrong, set the environment variable
 `OPENTESLACAM_DECODER` to `software` to stay off the GPU, or `openh264` to use the built-in decoder.
 
+A composited export encodes on the graphics card's H.264 encoder (NVIDIA NVENC, AMD or Intel through Windows)
+when the machine has one, which is about twice as fast at 4K. The export dialog then shows an **encoder** choice:
+pick `cpu` to keep the graphics card free for something else. Machines without a GPU encoder always use the
+built-in CPU encoder, and if the GPU encoder can't take the chosen size the export uses the CPU and says so.
+
 macOS and Linux aren't packaged. The code isn't Windows-specific, but those builds are untested.
 
 ## Install
 
-Run `OpenTeslaCam-Setup-2.0.0.exe`. It installs for your user only and doesn't need administrator rights.
+Run `OpenTeslaCam-Setup-2.0.1.exe`. It installs for your user only and doesn't need administrator rights.
 Windows SmartScreen may warn you because the installer isn't code-signed yet.
+
+**Updating:** when a newer version is out, the app shows `update to …` in the top bar, which opens its
+download page. Close OpenTeslaCam and run the new setup: it finds the installed app, fills in its folder and
+says `update`. Settings, saved layouts and shortcuts stay. Version 2.0.0 has no such notice, so update it from
+the [releases page](https://github.com/MOmerTepe/openteslacam/releases/latest).
 
 Setup checks your system first and offers anything missing before it installs:
 
@@ -81,8 +100,8 @@ powershell -ExecutionPolicy Bypass -File installer/detect-deps.ps1
 To uninstall, use Windows' installed apps. It removes only what setup installed, and leaves your clips,
 settings, saved layouts and Git.
 
-Unattended install: `OpenTeslaCam-Setup-2.0.0.exe --silent --dir <folder> [--desktop] [--tesla]`. Unattended
-uninstall: `uninstall.exe --uninstall --silent`.
+Unattended install: `OpenTeslaCam-Setup-2.0.1.exe --silent --dir <folder> [--desktop] [--tesla]`. Without
+`--dir`, it updates the installed app where it is. Unattended uninstall: `uninstall.exe --uninstall --silent`.
 
 ## Usage
 
@@ -138,7 +157,8 @@ Double-click a camera to focus it. The library panel closes to give the cameras 
 ## Privacy
 
 Everything runs locally, and your footage and vehicle data are never uploaded. Map tiles come from OpenStreetMap
-and Esri and are cached on your machine. That's the app's only network traffic. Setup goes online only if you
+and Esri and are cached on your machine. At startup the app also asks GitHub for the latest release, sending
+nothing but its version. That's the app's only network traffic. Setup goes online only if you
 choose to fetch Tesla's tools or install Git.
 
 ## Build from source

@@ -38,18 +38,31 @@ pub fn new_encoder(bps: u32) -> Result<Encoder, openh264::Error> {
 pub fn take_nals(bs: &EncodedBitStream, sample: &mut Vec<u8>, sps: &mut Vec<u8>, pps: &mut Vec<u8>) {
     for layer in (0..bs.num_layers()).filter_map(|l| bs.layer(l)) {
         for nal in (0..layer.nal_count()).filter_map(|n| layer.nal_unit(n)) {
-            // Annex-B start code (00 00 01 or 00 00 00 01) off; parameter sets go to avcC.
-            let nal = &nal[nal.iter().position(|&b| b != 0).unwrap_or(0) + 1..];
-            match nal.first().map(|b| b & 0x1F) {
-                Some(7) => *sps = nal.to_vec(),
-                Some(8) => *pps = nal.to_vec(),
-                _ => {
-                    sample.extend((nal.len() as u32).to_be_bytes());
-                    sample.extend(nal);
-                }
-            }
+            // Annex-B start code (00 00 01 or 00 00 00 01) off.
+            put_nal(&nal[nal.iter().position(|&b| b != 0).unwrap_or(0) + 1..], sample, sps, pps);
         }
     }
+}
+
+/// Appends one NAL (no start code) to `sample` as AVCC; parameter sets go to avcC instead.
+pub fn put_nal(nal: &[u8], sample: &mut Vec<u8>, sps: &mut Vec<u8>, pps: &mut Vec<u8>) {
+    match nal.first().map(|b| b & 0x1F) {
+        Some(7) => *sps = nal.to_vec(),
+        Some(8) => *pps = nal.to_vec(),
+        _ => {
+            sample.extend((nal.len() as u32).to_be_bytes());
+            sample.extend(nal);
+        }
+    }
+}
+
+/// The NALs of an Annex-B access unit, without start codes or trailing zeros.
+pub fn annex_b_nals(data: &[u8]) -> Vec<&[u8]> {
+    // Emulation prevention keeps 00 00 01 out of a NAL's payload.
+    let starts: Vec<usize> = data.windows(3).enumerate().filter(|(_, w)| *w == [0, 0, 1]).map(|(i, _)| i + 3).collect();
+    let ends = starts.iter().skip(1).map(|s| s - 3).chain([data.len()]);
+    let trim = |n: &'_ [u8]| -> usize { n.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1) };
+    starts.iter().zip(ends).map(|(&s, e)| &data[s..e.max(s)]).map(|n| &n[..trim(n)]).filter(|n| !n.is_empty()).collect()
 }
 
 /// The avcC payload for one SPS (at least 4 bytes) and one PPS.
