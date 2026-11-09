@@ -1,3 +1,6 @@
+// Release builds open no console window; CLI flags borrow the caller's console instead (see attach_console).
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod bench;
 mod decode;
 mod export;
@@ -29,6 +32,9 @@ const USAGE: &str = "usage:
 fn main() -> ExitCode {
     // Not `args()`: it panics on a Windows path that isn't valid Unicode.
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if !args.is_empty() {
+        attach_console();
+    }
     let res = match args.first().and_then(|a| a.to_str()) {
         Some("--dump-sei") if args.len() == 2 => dump_sei(Path::new(&args[1])),
         Some("--bench-decode") if args.len() >= 2 => bench::bench_decode(&args[1..]),
@@ -45,6 +51,20 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("{e}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// With the windows subsystem there's no console to print to; use the one this was run from, if any.
+fn attach_console() {
+    #[cfg(all(windows, not(debug_assertions)))]
+    {
+        unsafe extern "system" {
+            fn AttachConsole(process_id: u32) -> i32;
+        }
+        // ATTACH_PARENT_PROCESS. Failing is fine: redirected output doesn't need a console.
+        unsafe {
+            AttachConsole(u32::MAX);
         }
     }
 }

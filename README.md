@@ -4,6 +4,34 @@ A native Tesla dashcam viewer. It plays all 6 cameras of an unencrypted TeslaCam
 timeline, and shows the vehicle data Tesla embeds in the H.264 stream: a vehicle strip, telemetry lanes
 under the scrubber, and a GPS map. Written in Rust with egui. No FFmpeg or other system install needed.
 
+## Install (Windows)
+
+Run `OpenTeslaCam-Setup-<version>.exe`. It installs for your user only and needs no administrator rights.
+It checks your system first, then offers what's missing before anything is installed:
+
+- **Required:** only 64-bit Windows 10 or newer. The video decoder and vehicle-data parser are built in, and
+  the exes link the C runtime statically, so there's no VC++ Redistributable to install.
+- **Optional:** Tesla's [dashcam tools](https://github.com/teslamotors/dashcam), cloned from Tesla into
+  `<install folder>\vendor-dev\dashcam`. The app doesn't need them to play clips. They need git; if it's
+  missing, setup installs it first with winget (`Git.Git`), or links to the download if winget isn't there.
+
+The same check works on its own and changes nothing:
+
+```bash
+powershell -ExecutionPolicy Bypass -File installer/detect-deps.ps1
+```
+
+Uninstall from Windows' installed apps. It removes only what setup installed, and leaves your clips, settings,
+saved layouts and git.
+
+To build the installer, close any running copy of the app first; the result is in `dist/`:
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1
+```
+
+Unattended: `setup.exe --silent --dir <folder> [--desktop] [--tesla]`, and `uninstall.exe --uninstall --silent`.
+
 ## Build and run
 
 You need Rust stable and a C++ compiler (MSVC Build Tools on Windows), because `openh264` compiles its

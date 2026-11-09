@@ -209,6 +209,13 @@ area in every layout.
 **Phase 5: release**
 - GitHub Actions builds Win/macOS/Linux binaries on tags.
 - Replace `openteslacam-legacy/` README sections: no more `dashcam-master/` setup step.
+- **Windows installer (done):** `installer/` (egui plus `rfd`, sharing `src/ui/theme.rs`) and
+  `scripts/build-installer.ps1`, which appends the app to the setup exe. `installer/detect-deps.ps1` runs
+  first; missing git is installed through winget before the app. Per-user, with an uninstaller. Tesla's tools
+  are an unticked option under `<install folder>\vendor-dev\dashcam`, fetched from Tesla and never bundled.
+- Static C runtime (`.cargo/config.toml`), so neither exe needs the VC++ Redistributable. Release builds of
+  the app use the windows subsystem, so opening it shows no console; CLI flags attach to the caller's console.
+- Still open: code signing (setup is unsigned, so SmartScreen warns), an exe icon, macOS and Linux packages.
 
 ## Kept vs dropped from legacy
 - Kept: everything in the legacy feature list and the shortcuts table.

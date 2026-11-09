@@ -1,0 +1,4 @@
+# Static C runtime: neither the app nor its installer needs the VC++ Redistributable. The installer has to
+# start on a machine that lacks it, and with this the app has no runtime dependency left to install.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
