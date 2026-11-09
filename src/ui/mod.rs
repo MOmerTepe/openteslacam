@@ -338,7 +338,7 @@ impl App {
     }
 
     /// Runs after the panels that can move the clock, so a seek reaches the decoders this frame.
-    // shortcut: hidden and unfocused cameras decode too; skip them if HW4 at 4x can't keep up (PLAN Phase 0).
+    // shortcut: below 4x hidden and unfocused cameras decode in full, thin them out too if weaker GPUs can't do 2x.
     fn pump_decoders(&mut self, ctx: &Context) {
         let Some(p) = &self.player else { return };
         let target = p.target();
@@ -349,9 +349,10 @@ impl App {
         } else {
             Mode::Exact
         };
+        let front = self.tiles[0].tex.as_ref().map(|t| t.size());
         for (cam, (w, tile)) in self.workers.iter().zip(&mut self.tiles).enumerate() {
             if let Some((seg, local)) = target {
-                w.seek(seg, local, mode);
+                w.seek(seg, local, cam_mode(mode, p.rate, front, self.focus, cam));
             }
             match w.take() {
                 Some(Ok(f)) => tile.show_frame(ctx, cam, f),
@@ -419,6 +420,16 @@ impl eframe::App for App {
     }
 }
 
+/// How hard camera `cam` should decode. An HW4 set at 4x is more pixels per second than a GPU's
+/// decoder manages, and a saturated one starves the front camera (its frames are 4x the work): the
+/// camera that matters keeps every frame, the rest show keyframes.
+fn cam_mode(mode: Mode, rate: f64, front_size: Option<[usize; 2]>, focus: Option<usize>, cam: usize) -> Mode {
+    /// Between HW3's 1.2 MP and HW4's 5.4 MP front camera.
+    const HW4_FRONT: usize = 3_000_000;
+    let heavy = front_size.is_some_and(|[w, h]| w * h > HW4_FRONT);
+    if mode == Mode::Play && rate >= 4.0 && heavy && cam != focus.unwrap_or(0) { Mode::Keyframes } else { mode }
+}
+
 fn png_image(bytes: &[u8]) -> Option<ColorImage> {
     let icon = eframe::icon_data::from_png_bytes(bytes).ok()?;
     Some(ColorImage::from_rgba_unmultiplied([icon.width as usize, icon.height as usize], &icon.rgba))
@@ -432,6 +443,23 @@ mod tests {
     use eframe::egui::{DroppedFile, Event as InputEvent, Key, Modifiers, RawInput, Rect, pos2, vec2};
     use std::path::Path;
     use std::sync::Arc;
+
+    #[test]
+    fn only_hw4_at_4x_thins_out_the_other_cameras() {
+        const HW4: Option<[usize; 2]> = Some([2896, 1876]);
+        const HW3: Option<[usize; 2]> = Some([1280, 960]);
+        let play = |rate, front, focus, cam| cam_mode(Mode::Play, rate, front, focus, cam);
+        assert_eq!(play(4.0, HW4, None, 0), Mode::Play, "front keeps every frame");
+        assert_eq!(play(4.0, HW4, None, 1), Mode::Keyframes);
+        assert_eq!(play(4.0, HW4, Some(3), 3), Mode::Play, "the focused camera does instead");
+        assert_eq!(play(4.0, HW4, Some(3), 0), Mode::Keyframes);
+        assert_eq!(play(2.0, HW4, None, 1), Mode::Play, "2x keeps up");
+        assert_eq!(play(4.0, HW3, None, 1), Mode::Play, "HW3 is a quarter of the pixels");
+        assert_eq!(play(4.0, None, None, 1), Mode::Play, "no front picture to go by yet");
+        // Paused and scrubbing aren't touched.
+        assert_eq!(cam_mode(Mode::Exact, 4.0, HW4, None, 1), Mode::Exact);
+        assert_eq!(cam_mode(Mode::Keyframes, 1.0, HW4, None, 0), Mode::Keyframes);
+    }
     use std::time::{Duration, Instant};
 
     impl App {

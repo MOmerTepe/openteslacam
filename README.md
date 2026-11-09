@@ -50,9 +50,12 @@ carry over.
 Nothing else needs installing. The video decoder and vehicle-data parser are built in, and there's no VC++
 Redistributable, FFmpeg, Python or Node involved.
 
-Video is decoded in software, so CPU speed matters. HW4 clips have a much larger front camera, and at 4× speed
-that camera may skip between keyframes to stay in sync. To measure your machine, run
-`openteslacam --bench-decode <folder>` on some clips.
+Video is decoded on the GPU through Windows' own H.264 decoder. Without a capable GPU it uses that decoder on the
+CPU, and on editions without it (Windows N and some Server editions) a built-in software decoder. HW4 clips have a
+much larger front camera: at 4× speed it keeps every frame while the other cameras show keyframes only, and on a
+slower machine it may skip between keyframes at 2× too. To measure your machine, run
+`openteslacam --bench-decode <folder>` on some clips. If video looks wrong, set the environment variable
+`OPENTESLACAM_DECODER` to `software` to stay off the GPU, or `openh264` to use the built-in decoder.
 
 macOS and Linux aren't packaged. The code isn't Windows-specific, but those builds are untested.
 

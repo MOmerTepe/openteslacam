@@ -1,6 +1,6 @@
 //! Phase 0 go/no-go: can openh264 decode 6 camera streams at 1x and 4x on this machine?
 
-use crate::decode::{CamDecoder, to_rgba};
+use crate::decode::{Engine, Pic, ViewDec};
 use crate::fixture::{FPS, encode_clip, rng};
 use crate::library::CAMERAS;
 use crate::mp4;
@@ -19,31 +19,33 @@ struct Stats {
     video_s: f64,
     bytes: u64,
     wall: Duration,
-    rgba: Duration,
+    conv: Duration,
+    decoder: &'static str,
 }
 
-/// Decodes a whole clip like a camera thread of the app would (read, decode, convert to RGBA).
+/// Decodes a whole clip like a camera thread of the app would (read, decode, convert to an image).
 fn run_stream(path: &Path) -> Result<Stats, String> {
     let err = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
     let track = mp4::read_track(path).map_err(|e| err(&e))?;
     let mut f = File::open(path).map_err(|e| err(&e))?;
-    let mut dec = CamDecoder::new(&track)?;
-    let (mut buf, mut frames, mut rgba) = (Vec::new(), 0, Duration::ZERO);
-    let mut convert = |yuv: &openh264::decoder::DecodedYUV| {
+    let mut dec = ViewDec::new(&track, Engine::best())?;
+    let (mut frames, mut conv) = (0, Duration::ZERO);
+    let mut convert = |pic: &Pic| {
         let t = Instant::now();
-        to_rgba(yuv, &mut buf);
-        rgba += t.elapsed();
+        std::hint::black_box(pic.image()).map(|_| ()).map_err(|e| err(&e))?;
+        conv += t.elapsed();
         frames += 1;
+        Ok::<(), String>(())
     };
     let start = Instant::now();
     for s in &track.samples {
         let data = mp4::read_sample(&mut f, s).map_err(|e| err(&e))?;
-        if let Some(yuv) = dec.decode(&data, s.key).map_err(|e| err(&e))? {
-            convert(&yuv);
+        if let Some(pic) = dec.decode(&data, s).map_err(|e| err(&e))? {
+            convert(&pic)?;
         }
     }
-    for yuv in dec.flush().map_err(|e| err(&e))? {
-        convert(&yuv);
+    for pic in dec.flush().map_err(|e| err(&e))? {
+        convert(&pic)?;
     }
     let wall = start.elapsed();
     Ok(Stats {
@@ -55,7 +57,8 @@ fn run_stream(path: &Path) -> Result<Stats, String> {
         video_s: track.duration as f64 / track.timescale.max(1) as f64,
         bytes: track.samples.iter().map(|s| s.size as u64).sum(),
         wall,
-        rgba,
+        conv,
+        decoder: dec.name(),
     })
 }
 
@@ -64,13 +67,13 @@ fn run(paths: &[PathBuf]) -> Result<(), String> {
     let handles: Vec<_> = paths.iter().cloned().map(|p| thread::spawn(move || run_stream(&p))).collect();
     let stats: Vec<Stats> = handles.into_iter().map(|h| h.join().map_err(|_| "decoder thread panicked".to_string())?).collect::<Result<_, _>>()?;
     println!(
-        "{:<34} {:>9} {:>9} {:>7} {:>6} {:>7} {:>8} {:>9} {:>9}",
-        "stream", "res", "frames", "video s", "Mbit/s", "wall s", "fps", "rgba ms/f", "realtime"
+        "{:<34} {:>9} {:>9} {:>7} {:>6} {:>7} {:>8} {:>9} {:>9}  {}",
+        "stream", "res", "frames", "video s", "Mbit/s", "wall s", "fps", "conv ms/f", "realtime", "decoder"
     );
     for s in &stats {
         let wall = s.wall.as_secs_f64();
         println!(
-            "{:<34} {:>9} {:>9} {:>7.2} {:>6.1} {:>7.2} {:>8.1} {:>9.2} {:>8.2}x",
+            "{:<34} {:>9} {:>9} {:>7.2} {:>6.1} {:>7.2} {:>8.1} {:>9.2} {:>8.2}x  {}",
             s.name,
             format!("{}x{}", s.w, s.h),
             format!("{}/{}", s.frames, s.samples),
@@ -78,8 +81,9 @@ fn run(paths: &[PathBuf]) -> Result<(), String> {
             s.bytes as f64 * 8e-6 / s.video_s,
             wall,
             s.frames as f64 / wall,
-            s.rgba.as_secs_f64() * 1000.0 / s.frames.max(1) as f64,
+            s.conv.as_secs_f64() * 1000.0 / s.frames.max(1) as f64,
             s.video_s / wall,
+            s.decoder,
         );
     }
     let min = stats.iter().map(|s| s.video_s / s.wall.as_secs_f64()).fold(f64::INFINITY, f64::min);

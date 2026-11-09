@@ -6,6 +6,8 @@ mod decode;
 mod export;
 mod fixture;
 mod library;
+#[cfg(windows)]
+mod mf;
 // Phase 0 scaffolding: later phases call into these modules.
 #[allow(dead_code)]
 mod mp4;

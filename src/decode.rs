@@ -2,7 +2,7 @@
 //! decoder thread that follows the player's clock.
 
 use crate::mp4::{self, Sample, Track};
-use eframe::egui::{ColorImage, Context};
+use eframe::egui::{Color32, ColorImage, Context};
 use openh264::OpenH264API;
 use openh264::decoder::{DecodedYUV, Decoder, DecoderConfig, Flush};
 use openh264::formats::YUVSource;
@@ -17,6 +17,32 @@ use std::time::{Duration, Instant};
 
 const START: [u8; 4] = [0, 0, 0, 1];
 
+/// SPS and PPS in Annex-B form.
+pub(crate) fn annex_b_params(track: &Track) -> Vec<u8> {
+    let mut params = Vec::new();
+    for p in track.sps.iter().chain(&track.pps) {
+        params.extend(START);
+        params.extend(p);
+    }
+    params
+}
+
+/// Rewrites an AVCC sample as Annex-B into `buf`, after `prefix`.
+pub(crate) fn annex_b(buf: &mut Vec<u8>, prefix: &[u8], nal_len: usize, sample: &[u8]) -> Result<(), String> {
+    buf.clear();
+    buf.extend(prefix);
+    let mut pos = 0;
+    while pos + nal_len <= sample.len() {
+        let len = sample[pos..pos + nal_len].iter().fold(0usize, |a, &b| a << 8 | b as usize);
+        pos += nal_len;
+        let nal = sample.get(pos..pos + len).ok_or("NAL length runs past the sample")?;
+        pos += len;
+        buf.extend(START);
+        buf.extend(nal);
+    }
+    Ok(())
+}
+
 pub struct CamDecoder {
     dec: Decoder,
     /// SPS and PPS in Annex-B form, sent before every key frame so decoding can start at any of them.
@@ -28,11 +54,7 @@ pub struct CamDecoder {
 
 impl CamDecoder {
     pub fn new(track: &Track) -> Result<Self, String> {
-        let mut params = Vec::new();
-        for p in track.sps.iter().chain(&track.pps) {
-            params.extend(START);
-            params.extend(p);
-        }
+        let params = annex_b_params(track);
         // The default auto-flush after a packet with no picture corrupts reordering (B-frame)
         // streams; pictures still buffered come out of flush() at end of stream instead.
         let cfg = DecoderConfig::new().flush_after_decode(Flush::NoFlush);
@@ -42,20 +64,7 @@ impl CamDecoder {
 
     /// Decodes one sample; `None` means the decoder has no picture ready yet.
     pub fn decode(&mut self, sample: &[u8], key: bool) -> Result<Option<DecodedYUV<'_>>, String> {
-        self.buf.clear();
-        if key {
-            self.buf.extend(&self.params);
-        }
-        let n = self.nal_len;
-        let mut pos = 0;
-        while pos + n <= sample.len() {
-            let len = sample[pos..pos + n].iter().fold(0usize, |a, &b| a << 8 | b as usize);
-            pos += n;
-            let nal = sample.get(pos..pos + len).ok_or("NAL length runs past the sample")?;
-            pos += len;
-            self.buf.extend(START);
-            self.buf.extend(nal);
-        }
+        annex_b(&mut self.buf, if key { &self.params } else { &[] }, self.nal_len, sample)?;
         self.dec.decode(&self.buf).map_err(|e| format!("openh264: {e}"))
     }
 
@@ -71,6 +80,136 @@ pub fn to_rgba(yuv: &DecodedYUV, out: &mut Vec<u8>) -> (u32, u32) {
     out.resize(w * h * 4, 0);
     yuv.write_rgba8(out);
     (w as u32, h as u32)
+}
+
+/// A decoded picture on its way to the screen.
+pub enum Pic<'a> {
+    Yuv(DecodedYUV<'a>),
+    #[cfg(windows)]
+    Mf(&'a crate::mf::Frame),
+}
+
+impl Pic<'_> {
+    /// The picture as an egui image. The conversion's output is opaque, which is premultiplied
+    /// as is: going through `from_rgba_unmultiplied` costs an HW4 front frame about 6 ms. A GPU
+    /// picture comes back to memory here, so frames nobody shows don't pay for that.
+    pub fn image(&self) -> Result<ColorImage, String> {
+        let [w, h] = match self {
+            Pic::Yuv(y) => [y.dimensions().0, y.dimensions().1],
+            #[cfg(windows)]
+            Pic::Mf(f) => f.size(),
+        };
+        // Zeroed u32s, unlike Color32s, cost nothing until the conversion touches them.
+        let mut px = vec![0u32; w * h];
+        match self {
+            Pic::Yuv(y) => y.write_rgba8(bytemuck::cast_slice_mut(&mut px)),
+            #[cfg(windows)]
+            Pic::Mf(f) => f.write_rgba(&mut px).map_err(|e| format!("media foundation: {e}"))?,
+        }
+        Ok(ColorImage::new([w, h], bytemuck::cast_vec::<u32, Color32>(px)))
+    }
+
+    /// The picture's presentation time, when the decoder reports one.
+    fn pts(&self) -> Option<u64> {
+        match self {
+            Pic::Yuv(_) => None,
+            #[cfg(windows)]
+            Pic::Mf(f) => Some(f.pts),
+        }
+    }
+}
+
+/// What decodes a clip for the viewer, best first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Engine {
+    /// Media Foundation on the GPU.
+    Gpu,
+    /// Media Foundation on the CPU.
+    Software,
+    OpenH264,
+}
+
+impl Engine {
+    /// Where a clip starts. OPENTESLACAM_DECODER=software or openh264 is there in case a machine's
+    /// GPU or decoder misbehaves.
+    pub fn best() -> Engine {
+        match std::env::var("OPENTESLACAM_DECODER").as_deref() {
+            Ok("software") => Engine::Software,
+            Ok("openh264") => Engine::OpenH264,
+            _ => Engine::Gpu,
+        }
+    }
+
+    fn next(self) -> Engine {
+        match self {
+            Engine::Gpu => Engine::Software,
+            _ => Engine::OpenH264,
+        }
+    }
+}
+
+/// The viewer's decoder. Export stays on `CamDecoder`, which needs no realtime speed.
+pub enum ViewDec {
+    Soft(CamDecoder),
+    #[cfg(windows)]
+    Mf(crate::mf::MfDecoder),
+}
+
+impl ViewDec {
+    /// `engine`, or the next one down if it can't be set up here.
+    pub fn new(track: &Track, engine: Engine) -> Result<ViewDec, String> {
+        // Media Foundation runs in low-latency mode, which only suits clips without reordering.
+        // Tesla's have none; a clip with B-frames goes to openh264.
+        #[cfg(windows)]
+        if track.samples.windows(2).all(|p| p[0].pts < p[1].pts) {
+            let tries: &[bool] = match engine {
+                Engine::Gpu => &[true, false],
+                Engine::Software => &[false],
+                Engine::OpenH264 => &[],
+            };
+            if let Some(d) = tries.iter().find_map(|&gpu| crate::mf::MfDecoder::new(track, gpu).ok()) {
+                return Ok(ViewDec::Mf(d));
+            }
+        }
+        let _ = engine;
+        CamDecoder::new(track).map(ViewDec::Soft)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            ViewDec::Soft(_) => "openh264",
+            #[cfg(windows)]
+            ViewDec::Mf(d) if d.on_gpu => "media foundation, gpu",
+            #[cfg(windows)]
+            ViewDec::Mf(_) => "media foundation",
+        }
+    }
+
+    pub fn decode(&mut self, sample: &[u8], s: &Sample) -> Result<Option<Pic<'_>>, String> {
+        match self {
+            ViewDec::Soft(d) => Ok(d.decode(sample, s.key)?.map(Pic::Yuv)),
+            #[cfg(windows)]
+            ViewDec::Mf(d) => Ok(d.decode(sample, s.key, s.pts, s.dur)?.map(Pic::Mf)),
+        }
+    }
+
+    pub fn flush(&mut self) -> Result<Vec<Pic<'_>>, String> {
+        match self {
+            ViewDec::Soft(d) => Ok(d.flush()?.into_iter().map(Pic::Yuv).collect()),
+            #[cfg(windows)]
+            ViewDec::Mf(d) => Ok(d.flush()?.iter().map(Pic::Mf).collect()),
+        }
+    }
+
+    /// Whether the next engine should take this clip over: Media Foundation refused a sample, or
+    /// swallowed the clip's start without a picture.
+    fn failed(&self, was_err: bool) -> bool {
+        match self {
+            ViewDec::Soft(_) => false,
+            #[cfg(windows)]
+            ViewDec::Mf(d) => was_err || d.silent.is_some_and(|n| n > crate::mf::MAX_SILENT),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,8 +254,9 @@ impl CamWorker {
     pub fn spawn(name: &str, ctx: Context) -> CamWorker {
         let (tx, rx) = channel();
         let slot = Slot::default();
-        let w = Worker::new(slot.clone(), ctx);
-        let thread = thread::Builder::new().name(format!("decode-{name}")).spawn(move || w.run(rx)).expect("spawn decoder thread");
+        let shared = slot.clone();
+        // Built on its thread: a Media Foundation decoder isn't Send.
+        let thread = thread::Builder::new().name(format!("decode-{name}")).spawn(move || Worker::new(shared, ctx).run(rx)).expect("spawn decoder thread");
         CamWorker { tx, slot, generation: Cell::new(0), thread: Some(thread) }
     }
 
@@ -149,11 +289,12 @@ impl Drop for CamWorker {
 }
 
 /// A Play-mode camera further behind than this (seconds) jumps to the latest keyframe <= target
-/// instead of decoding every frame: an HW4 front stream decodes at only ~1.7x realtime.
-// shortcut: frames get dropped at 2x/4x on slow CPUs, upgrade with hardware decode.
+/// instead of decoding every frame: openh264 does an HW4 front stream at only ~1.3-1.7x realtime.
 const CATCH_UP: f64 = 0.5;
-/// While lagging in Play mode, convert and show a frame at most this often.
-const LAG_REFRESH: Duration = Duration::from_millis(25);
+/// While lagging in Play mode, convert and show a frame at most this often. Below any real decode
+/// time, so a camera just behind still shows every frame; a catch-up burst doesn't convert frames
+/// no screen would show.
+const LAG_REFRESH: Duration = Duration::from_millis(10);
 
 /// `seconds` in track ticks. The margin keeps a time computed as pts / timescale, often with a
 /// segment start added and taken off again, from rounding below that pts. A thousandth of a tick
@@ -217,6 +358,8 @@ struct Feed {
     /// Sent but not yet out of the decoder, as (pts, sample). Pictures come out in pts order.
     pending: Vec<(u64, usize)>,
     last_out: Option<u64>,
+    /// The decoder skipped a sample without saying so.
+    dropped: bool,
 }
 
 /// `Publisher::shown` sample once the tile was told its picture is lost.
@@ -226,7 +369,6 @@ struct Publisher {
     slot: Slot,
     generation: u64,
     ctx: Context,
-    rgba: Vec<u8>,
     shown: Option<(usize, usize)>,
     /// A span of pts in a segment with no pictures, found out the hard way: re-decoding can't help.
     lost: Option<(usize, Range<u64>)>,
@@ -243,10 +385,8 @@ impl Publisher {
         self.ctx.request_repaint();
     }
 
-    fn frame(&mut self, seg: usize, sample: usize, yuv: &DecodedYUV) {
-        let (w, h) = to_rgba(yuv, &mut self.rgba);
-        let image = ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &self.rgba);
-        self.put(Ok(FrameOut { seg, sample, image }));
+    fn frame(&mut self, seg: usize, sample: usize, pic: &Pic) {
+        self.put(pic.image().map(|image| FrameOut { seg, sample, image }));
     }
 
     /// Whether `pts` is in the known lost span; if so the tile hears about it, once.
@@ -271,7 +411,12 @@ struct Target {
 
 /// Matches a decoded picture to its sample and shows it if wanted; true once the target is out or
 /// known to be lost.
-fn picture(yuv: &DecodedYUV, feed: &mut Feed, out: &mut Publisher, t: &Target) -> bool {
+fn picture(pic: &Pic, feed: &mut Feed, out: &mut Publisher, t: &Target) -> bool {
+    // A decoder that reports times tells us which earlier samples it dropped without a picture.
+    if let Some(p) = pic.pts().filter(|p| feed.pending.iter().any(|e| e.0 == *p)) {
+        feed.dropped |= feed.pending.iter().any(|e| e.0 < p);
+        feed.pending.retain(|e| e.0 >= p);
+    }
     let Some(i) = (0..feed.pending.len()).min_by_key(|&i| feed.pending[i].0) else { return false };
     let (pts, sample) = feed.pending.swap_remove(i);
     let prev = feed.last_out.replace(pts);
@@ -283,7 +428,7 @@ fn picture(yuv: &DecodedYUV, feed: &mut Feed, out: &mut Publisher, t: &Target) -
     }
     let reached = sample == t.sample;
     if reached || (t.mode == Mode::Play && out.at.elapsed() >= LAG_REFRESH) {
-        out.frame(t.seg, sample, yuv);
+        out.frame(t.seg, sample, pic);
     }
     reached
 }
@@ -294,7 +439,12 @@ struct Worker {
     /// The following segment, opened ahead (before going idle) so a boundary doesn't wait on disk.
     next: Option<(usize, Result<Loaded, String>)>,
     /// None: the next step restarts from a keyframe.
-    dec: Option<CamDecoder>,
+    dec: Option<ViewDec>,
+    /// What decodes the current clip. It moves down when Media Foundation can't decode the clip, and
+    /// to openh264 when it reports damage. It would carry on past a damaged frame showing pictures
+    /// built on it; openh264 stops, and the tile says so until the next keyframe.
+    // shortcut: damage Media Foundation conceals without a word shows as a glitch until the next keyframe, parse slices ourselves if that matters.
+    engine: Engine,
     feed: Feed,
     out: Publisher,
     target: Option<(usize, f64, Mode)>,
@@ -304,8 +454,8 @@ struct Worker {
 
 impl Worker {
     fn new(slot: Slot, ctx: Context) -> Worker {
-        let out = Publisher { slot, generation: 0, ctx, rgba: Vec::new(), shown: None, lost: None, at: Instant::now() };
-        Worker { files: Vec::new(), cur: None, next: None, dec: None, feed: Feed::default(), out, target: None, idle: true }
+        let out = Publisher { slot, generation: 0, ctx, shown: None, lost: None, at: Instant::now() };
+        Worker { files: Vec::new(), cur: None, next: None, dec: None, engine: Engine::best(), feed: Feed::default(), out, target: None, idle: true }
     }
 
     fn run(mut self, rx: Receiver<Cmd>) {
@@ -372,7 +522,7 @@ impl Worker {
                 self.out.put(Err(e.clone()));
             }
             self.cur = Some((seg, l));
-            self.dec = None;
+            (self.dec, self.engine) = (None, Engine::best());
         }
         let Some((_, Ok(l))) = &mut self.cur else {
             self.idle = true;
@@ -393,7 +543,7 @@ impl Worker {
         let fed = samples[self.feed.next.min(samples.len() - 1)].pts;
         let behind = t.pts.saturating_sub(fed) as f64 / l.track.timescale.max(1) as f64;
         if self.dec.is_none() || must_seek(mode, key, self.feed.next, t.pts, self.feed.last_out, behind) {
-            match CamDecoder::new(&l.track) {
+            match ViewDec::new(&l.track, self.engine) {
                 Ok(d) => self.dec = Some(d),
                 Err(e) => return self.give_up(seg, e),
             }
@@ -411,20 +561,28 @@ impl Worker {
                 Err(e) => return self.give_up(seg, format!("read: {e}")),
             };
             self.feed.pending.push((s.pts, i));
-            match dec.decode(&data, s.key) {
-                Ok(Some(yuv)) => done = picture(&yuv, &mut self.feed, &mut self.out, &t),
+            let res = dec.decode(&data, s);
+            let was_err = res.is_err();
+            match res {
+                Ok(Some(pic)) => done = picture(&pic, &mut self.feed, &mut self.out, &t),
                 Ok(None) => {}
                 // A damaged frame yields no picture; forget it so later pictures still match.
                 Err(_) => self.feed.pending.retain(|p| p.1 != i),
+            }
+            if dec.failed(was_err) || self.feed.dropped {
+                // Next step: from the keyframe again, on another engine.
+                self.engine = if self.feed.dropped { Engine::OpenH264 } else { self.engine.next() };
+                self.dec = None;
+                return;
             }
         }
         // Keyframes mode feeds nothing past the keyframe, and at the clip's end there is nothing
         // more to feed: either way the reorder buffer has to give up what it holds.
         let fed_all = self.feed.next >= samples.len() || (mode == Mode::Keyframes && self.feed.next > sample);
         if !done && fed_all {
-            for yuv in dec.flush().unwrap_or_default() {
+            for pic in dec.flush().unwrap_or_default() {
                 // Stop here: later pictures would overwrite the target in the slot.
-                if picture(&yuv, &mut self.feed, &mut self.out, &t) {
+                if picture(&pic, &mut self.feed, &mut self.out, &t) {
                     done = true;
                     break;
                 }
@@ -589,6 +747,34 @@ mod tests {
         assert!(!must_seek(Mode::Play, 36, 36, 40, Some(35), 1.5));
     }
 
+    /// Windows' decoder gives the same pictures as openh264, at the times they were fed with. The
+    /// size needs cropping, as Tesla's do (938 rows out of 944 coded).
+    #[cfg(windows)]
+    #[test]
+    fn media_foundation_matches_openh264() {
+        let path = gradient_clip_sized("mfsame", 40, 122, 90);
+        let t = mp4::read_track(&path).unwrap();
+        for engine in [Engine::Software, Engine::Gpu] {
+            let mut f = File::open(&path).unwrap();
+            let mut soft = ViewDec::new(&t, Engine::OpenH264).unwrap();
+            let mut mf = ViewDec::new(&t, engine).unwrap();
+            assert_eq!(soft.name(), "openh264");
+            assert!(mf.name().starts_with("media foundation"), "{engine:?} on {}", mf.name());
+            for s in &t.samples {
+                let data = mp4::read_sample(&mut f, s).unwrap();
+                let a = soft.decode(&data, s).unwrap().unwrap().image().unwrap();
+                let pic = mf.decode(&data, s).unwrap().expect("low latency: a picture for every sample");
+                assert_eq!(pic.pts(), Some(s.pts));
+                let b = pic.image().unwrap();
+                assert_eq!(a.size, b.size);
+                let worst = a.pixels.iter().zip(&b.pixels).map(|(x, y)| x.r().abs_diff(y.r()).max(x.g().abs_diff(y.g())).max(x.b().abs_diff(y.b()))).max();
+                assert!(worst.unwrap() <= 2, "{engine:?}, sample at {}: differs by {worst:?}", s.pts);
+                assert!(b.pixels.iter().all(|p| p.a() == 255));
+            }
+        }
+        std::fs::remove_file(&path).unwrap();
+    }
+
     /// Sends one target and waits for the worker's answer as (segment, sample).
     fn wait(w: &CamWorker, seg: usize, local: f64, mode: Mode) -> Result<(usize, usize), String> {
         while w.take().is_some() {}
@@ -632,10 +818,13 @@ mod tests {
     }
 
     fn gradient_clip(tag: &str, frames: usize) -> PathBuf {
+        gradient_clip_sized(tag, frames, 128, 96)
+    }
+
+    fn gradient_clip_sized(tag: &str, frames: usize, w: usize, h: usize) -> PathBuf {
         use crate::fixture::encode_clip;
         use crate::sei;
         let path = std::env::temp_dir().join(format!("otc-{tag}-{}.mp4", std::process::id()));
-        let (w, h) = (128, 96);
         // Moving gradient, with a Tesla-style SEI NAL in every sample like the front camera.
         encode_clip(&path, w, h, 200_000, frames, |t, yuv| {
             yuv.extend((0..w * h).map(|i| (i % w + t * 3) as u8));

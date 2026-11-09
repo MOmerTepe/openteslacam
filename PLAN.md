@@ -47,7 +47,7 @@ Why this approach:
 Tesla's tools stay in the dev loop. A test runs `sei_extractor.py` on sample clips and diffs its
 CSV output against ours (see Phase 0).
 
-### 2. Dependencies (5 direct)
+### 2. Dependencies (7 direct)
 
 | Crate | Why |
 |---|---|
@@ -56,6 +56,8 @@ CSV output against ours (see Phase 0).
 | `rfd` | Native "Open Folder" dialog. |
 | `serde_json` | Reads `event.json`. |
 | `walkers` | Slippy-map widget for egui, with tile fetch and cache (Phase 3). |
+| `windows` (Windows only) | Media Foundation and Direct3D 11, the viewer's decoder there: openh264 can't keep up with HW4 front clips. |
+| `bytemuck` | Hands decoded pixels to egui without a per-pixel pass. |
 
 Written by hand: the MP4 demuxer (`moov/trak/stbl`: `stsd/avcC`, `stts`, `stss`, `stsz`,
 `stco/co64`, `mdhd`), the SEI parser and the protobuf decoder. Tesla files are plain,
@@ -270,3 +272,33 @@ profile clips will likely be slower):
 |---|---|---|---|
 | HW3, 6 × 1280×960 | 4.6× realtime | pass | pass |
 | HW4, front 2896×1876 + 5 × 1448×938 | 1.7× realtime, 1.35× on another run | pass | fail |
+
+Real HW4 clips later showed that margin wasn't enough. openh264 takes the front camera ~23 ms per frame in busy
+scenes, and with conversion it missed the 27.7 ms frame budget at 1×: 300–600 ms behind, about 20 fps shown. The
+viewer now decodes through Windows' own H.264 decoder (`src/mf.rs`, low-latency mode): on the GPU, with a picture
+copied back to memory only when it's shown. `src/decode.rs` moves down to the same decoder on the CPU, then to
+openh264 (Windows N, some Server editions), and uses openh264 for clips with B-frames and clips where the decoder
+reports damage. Export stays on openh264.
+
+Damage Media Foundation doesn't report: with a slice's payload overwritten but its framing intact, it conceals and
+shows a local glitch until the next keyframe, on the GPU and the CPU alike, where openh264 said "damaged frame".
+
+Measured on a Ryzen 9 5900X and RTX 3080, playing real footage in the app, front camera:
+
+| | Shown fps | Behind (95th percentile) | Decoder restarts | CPU cores |
+|---|---|---|---|---|
+| 1×, openh264 before the fix | ~31 | 327–473 ms | 1–11 per minute | |
+| 1×, Media Foundation on the CPU | 36 | 30 ms | 0 | 3.6 |
+| 1×, GPU | 36 | 21 ms | 0 | 2.0 |
+| 2×, Media Foundation on the CPU | 49 of 72 | 535 ms | 53 in 45 s | |
+| 2×, GPU | 71 of 72 | 50 ms | 0 | 3.4 |
+| 4×, Media Foundation on the CPU | 43 of 144 | 596 ms | 199 in 32 s | 3.4 |
+| 4×, GPU | 56 of 144 | 127 ms | 0 | 2.3 |
+
+Six HW4 streams at 4× need ~1760 MP/s, past the ~1640 the RTX 3080's decoder reached, and a saturated decoder
+starves the front camera. So at 4× an HW4 set decodes the focused camera (front if none) in full and shows
+keyframes only on the others (`cam_mode` in `src/ui/mod.rs`), as Phase 0 planned.
+
+Tesla's recording has a real hole of ~0.55 s at every segment boundary: `frame_seq_no` skips about 20 frames on
+the front camera while it's continuous inside a clip, and the GPS moved by as much. No viewer can show those
+frames.

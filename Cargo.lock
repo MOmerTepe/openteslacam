@@ -2939,11 +2939,13 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 name = "openteslacam"
 version = "2.0.0"
 dependencies = [
+ "bytemuck",
  "eframe",
  "openh264",
  "rfd",
  "serde_json",
  "walkers",
+ "windows",
 ]
 
 [[package]]
