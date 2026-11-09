@@ -3,6 +3,7 @@ vendor-dev/
 testdata/
 dist/
 .venv/
+design/
 
 
 # Added by cargo

@@ -184,7 +184,7 @@ cd vendor-dev/dashcam && ../.venv/Scripts/python -m grpc_tools.protoc -I. --pyth
 On Linux and macOS the venv path is `.venv/bin/python`. To include real footage, copy clips into the git-ignored
 `testdata/`; every `.mp4` under it gets diffed.
 
-`PLAN.md` holds the architecture, design rules and deviations, and `design/mockup/` is the GUI reference.
+`PLAN.md` holds the architecture, design rules and deviations.
 
 ## License
 
