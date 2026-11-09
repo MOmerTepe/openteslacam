@@ -25,7 +25,7 @@ Clips recorded after that are normal MP4s. Clips already encrypted stay unreadab
 | | 1.x | 2.0 |
 |---|---|---|
 | App | Electron, or a browser | Native Rust app, one exe |
-| Tesla's tools | Download them and drop them in by hand | Not needed: vehicle data is parsed by the app itself |
+| Tesla's tools | Download them and drop them in by hand | Not needed: the app has its own parser, written from Tesla's published format |
 | Camera sync | Side cameras corrected against the front | One clock drives all cameras |
 | Layouts | Review, Driving, free-form grid | Grid, Center, Driving, and saved Custom layouts |
 | Vehicle data | Overlay on the video | Strip below the video: nothing covers the footage |
