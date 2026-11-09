@@ -34,9 +34,13 @@ pub struct Settings {
     /// km/h, else mph.
     pub metric: bool,
     pub layout: Layout,
-    /// "map" or "sat"; Phase 3 reads it.
+    /// "map" or "sat".
     pub map_mode: String,
+    /// Heading-up, else north-up.
+    pub map_heading: bool,
     pub last_folder: Option<PathBuf>,
+    /// Where the last export went.
+    pub export_dir: Option<PathBuf>,
     pub library_open: bool,
     pub lanes_open: bool,
     /// Saved as `{ name: { camera: [x, y, w, h] | null } }`; never empty.
@@ -54,7 +58,9 @@ impl Default for Settings {
             metric: true,
             layout: Layout::Grid,
             map_mode: "map".to_owned(),
+            map_heading: false,
             last_folder: None,
+            export_dir: None,
             library_open: true,
             lanes_open: true,
             custom_layouts: grid::default_profiles(),
@@ -70,8 +76,10 @@ impl Settings {
             "units": if self.metric { "metric" } else { "imperial" },
             "layout": self.layout.name(),
             "map_mode": self.map_mode,
+            "map_heading": self.map_heading,
             // shortcut: a non-UTF-8 last_folder is forgotten on restart, store the OsStr units if anyone hits it.
             "last_folder": self.last_folder.as_ref().map(|p| p.to_string_lossy()),
+            "export_dir": self.export_dir.as_ref().map(|p| p.to_string_lossy()),
             "library_open": self.library_open,
             "lanes_open": self.lanes_open,
             "custom_layouts": grid::profiles_to_json(&self.custom_layouts),
@@ -99,7 +107,9 @@ impl Settings {
             metric: v["units"].as_str() != Some("imperial"),
             layout: Layout::ALL.into_iter().find(|l| v["layout"].as_str() == Some(l.name())).unwrap_or(d.layout),
             map_mode: v["map_mode"].as_str().map_or(d.map_mode, str::to_owned),
+            map_heading: v["map_heading"].as_bool().unwrap_or(d.map_heading),
             last_folder: v["last_folder"].as_str().map(PathBuf::from),
+            export_dir: v["export_dir"].as_str().map(PathBuf::from),
             library_open: v["library_open"].as_bool().unwrap_or(d.library_open),
             lanes_open: v["lanes_open"].as_bool().unwrap_or(d.lanes_open),
             custom_layouts,
@@ -121,7 +131,9 @@ mod tests {
             metric: false,
             layout: Layout::Driving,
             map_mode: "sat".to_owned(),
+            map_heading: true,
             last_folder: Some(PathBuf::from(r"E:\TeslaCam")),
+            export_dir: Some(PathBuf::from(r"E:\Exports")),
             library_open: false,
             lanes_open: false,
             custom_layouts,

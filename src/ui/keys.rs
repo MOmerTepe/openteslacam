@@ -15,9 +15,7 @@ pub enum Action {
     End,
     ExitFocus,
     Shortcuts,
-    /// Reserved for Phase 4.
     TrimIn,
-    /// Reserved for Phase 4.
     TrimOut,
 }
 
@@ -68,8 +66,7 @@ pub fn action_for(key: Key, m: Modifiers) -> Option<Action> {
     })
 }
 
-// shortcut: I/O are left out of this list until Phase 4 makes them do something.
-const SHORTCUTS: [(&str, &str); 9] = [
+const SHORTCUTS: [(&str, &str); 10] = [
     ("Space", "Play / pause"),
     ("← →", "Seek ±5 seconds"),
     ("Shift + ← →", "Seek ±30 seconds"),
@@ -77,6 +74,7 @@ const SHORTCUTS: [(&str, &str); 9] = [
     ("[ ] or PgUp PgDn", "Previous / next segment"),
     ("Home", "Jump to start"),
     ("End", "Jump to end"),
+    ("I O", "Set In / Out (again to clear)"),
     ("?", "Show / hide this list"),
     ("Esc", "Close this list / exit focus"),
 ];

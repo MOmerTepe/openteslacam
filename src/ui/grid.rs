@@ -86,12 +86,17 @@ fn cells(placed: &Placed, z: &[usize; 6], focus: Option<usize>) -> Vec<(usize, C
     z.iter().filter_map(|&cam| Some((cam, placed[cam]?))).collect()
 }
 
+/// The current layout's tiles, bottom first: what the composited export draws.
+pub fn current_cells(s: &Settings, focus: Option<usize>) -> Vec<(usize, Cell)> {
+    cells(&placed(s), &s.custom_z, focus)
+}
+
 /// Pixels per grid unit. A tile's right and bottom edges give up the gap, so outer edges stay flush.
 fn unit(area: Rect) -> Vec2 {
     ((area.size() + Vec2::splat(GAP)) / vec2(COLS, ROWS)).max(Vec2::splat(1.0))
 }
 
-fn cell_rect(area: Rect, [x, y, w, h]: Cell) -> Rect {
+pub fn cell_rect(area: Rect, [x, y, w, h]: Cell) -> Rect {
     let u = unit(area);
     let min = area.min + vec2(x * u.x, y * u.y);
     let max = min + vec2(w * u.x - GAP, h * u.y - GAP);

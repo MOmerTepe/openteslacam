@@ -7,7 +7,7 @@ use crate::sei::{self, AP_AUTOSTEER, AP_FSD, AP_NONE, AP_TACC, GEAR_DRIVE, GEAR_
 use eframe::egui::IconData;
 use eframe::icon_data::IconDataExt;
 use openh264::OpenH264API;
-use openh264::encoder::{BitRate, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, RateControlMode};
+use openh264::encoder::{BitRate, EncodedBitStream, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, RateControlMode};
 use openh264::formats::YUVBuffer;
 use std::fs;
 use std::path::Path;
@@ -23,6 +23,46 @@ pub fn rng(s: &mut u64) -> u64 {
     *s
 }
 
+/// `bps` at about `FPS`, a keyframe every second.
+pub fn new_encoder(bps: u32) -> Result<Encoder, openh264::Error> {
+    let cfg = EncoderConfig::new()
+        .bitrate(BitRate::from_bps(bps))
+        .max_frame_rate(FrameRate::from_hz(FPS as f32))
+        .rate_control_mode(RateControlMode::Bitrate)
+        .skip_frames(false)
+        .intra_frame_period(IntraFramePeriod::from_num_frames(FPS));
+    Encoder::with_api_config(OpenH264API::from_source(), cfg)
+}
+
+/// Appends one encoded picture to `sample` as AVCC; the parameter sets go to `sps` and `pps` instead.
+pub fn take_nals(bs: &EncodedBitStream, sample: &mut Vec<u8>, sps: &mut Vec<u8>, pps: &mut Vec<u8>) {
+    for layer in (0..bs.num_layers()).filter_map(|l| bs.layer(l)) {
+        for nal in (0..layer.nal_count()).filter_map(|n| layer.nal_unit(n)) {
+            // Annex-B start code (00 00 01 or 00 00 00 01) off; parameter sets go to avcC.
+            let nal = &nal[nal.iter().position(|&b| b != 0).unwrap_or(0) + 1..];
+            match nal.first().map(|b| b & 0x1F) {
+                Some(7) => *sps = nal.to_vec(),
+                Some(8) => *pps = nal.to_vec(),
+                _ => {
+                    sample.extend((nal.len() as u32).to_be_bytes());
+                    sample.extend(nal);
+                }
+            }
+        }
+    }
+}
+
+/// The avcC payload for one SPS (at least 4 bytes) and one PPS.
+pub fn avcc_of(sps: &[u8], pps: &[u8]) -> Vec<u8> {
+    let mut avcc = vec![1, sps[1], sps[2], sps[3], 0xFF, 0xE1];
+    avcc.extend((sps.len() as u16).to_be_bytes());
+    avcc.extend(sps);
+    avcc.push(1);
+    avcc.extend((pps.len() as u16).to_be_bytes());
+    avcc.extend(pps);
+    avcc
+}
+
 /// Encodes `frames` pictures at `FPS` (a keyframe every second) and muxes them to `path`.
 /// `frame(t, yuv)` appends picture `t` as I420 to the empty `yuv` and may return one extra NAL
 /// (e.g. SEI) to put first in that sample.
@@ -34,14 +74,8 @@ pub fn encode_clip(
     frames: usize,
     mut frame: impl FnMut(usize, &mut Vec<u8>) -> Option<Vec<u8>>,
 ) -> Result<(), String> {
-    let cfg = EncoderConfig::new()
-        .bitrate(BitRate::from_bps(bps))
-        .max_frame_rate(FrameRate::from_hz(FPS as f32))
-        .rate_control_mode(RateControlMode::Bitrate)
-        .skip_frames(false)
-        .intra_frame_period(IntraFramePeriod::from_num_frames(FPS));
     let enc_err = |e: openh264::Error| format!("encoder {w}x{h}: {e}");
-    let mut enc = Encoder::with_api_config(OpenH264API::from_source(), cfg).map_err(enc_err)?;
+    let mut enc = new_encoder(bps).map_err(enc_err)?;
     let (mut sps, mut pps) = (Vec::new(), Vec::new());
     let mut samples = Vec::with_capacity(frames);
     let mut yuv = Vec::with_capacity(w * h * 3 / 2);
@@ -55,20 +89,7 @@ pub fn encode_clip(
             sample.extend((nal.len() as u32).to_be_bytes());
             sample.extend(nal);
         }
-        for layer in (0..bs.num_layers()).filter_map(|l| bs.layer(l)) {
-            for nal in (0..layer.nal_count()).filter_map(|n| layer.nal_unit(n)) {
-                // Annex-B start code (00 00 01 or 00 00 00 01) off; parameter sets go to avcC.
-                let nal = &nal[nal.iter().position(|&b| b != 0).unwrap_or(0) + 1..];
-                match nal.first().map(|b| b & 0x1F) {
-                    Some(7) => sps = nal.to_vec(),
-                    Some(8) => pps = nal.to_vec(),
-                    _ => {
-                        sample.extend((nal.len() as u32).to_be_bytes());
-                        sample.extend(nal);
-                    }
-                }
-            }
-        }
+        take_nals(&bs, &mut sample, &mut sps, &mut pps);
         if sample.len() == extra.map_or(0, |n| n.len() + 4) {
             return Err(format!("encoder {w}x{h} produced no picture for frame {t}"));
         }
@@ -77,12 +98,7 @@ pub fn encode_clip(
     if sps.len() < 4 || pps.is_empty() {
         return Err(format!("encoder {w}x{h} produced no SPS/PPS"));
     }
-    let mut avcc = vec![1, sps[1], sps[2], sps[3], 0xFF, 0xE1];
-    avcc.extend((sps.len() as u16).to_be_bytes());
-    avcc.extend(&sps);
-    avcc.push(1);
-    avcc.extend((pps.len() as u16).to_be_bytes());
-    avcc.extend(&pps);
+    let avcc = avcc_of(&sps, &pps);
     let io = |e: std::io::Error| format!("{}: {e}", path.display());
     let mut m = Muxer::create(path, FPS * 1000, w as u32, h as u32, &avcc).map_err(io)?;
     for (data, key) in &samples {

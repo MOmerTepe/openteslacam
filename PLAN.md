@@ -225,3 +225,41 @@ area in every layout.
   strip shows "no vehicle data", the lanes stay empty, and playback is unaffected.
 - **Encrypted clips**: they can't be played. They are listed with an "Encrypted" badge and a
   hint pointing to *Controls → Safety → Encrypt Dashcam Recordings*.
+
+## Deviations from this plan
+
+Recorded during the build, with the reason.
+
+- **Phase 0 spike window removed.** The `--view` single-camera window was deleted once the real viewer
+  existed.
+- **Decode benchmark is synthetic so far.** No real clips were available. See the numbers below.
+- **Third decoder mode, `Play`.** Exact mode publishes nothing if a camera can never reach its target, as
+  at 4×. In `Play` a lagging camera shows its newest decoded frame, and past 0.5 s behind it jumps to the
+  latest keyframe before the target. This is the Phase 0 fallback for slow streams. Both thresholds are
+  untuned guesses until real HW4 clips are tried.
+- **Thumbnails** decode `thumb.png` through `eframe::icon_data::from_png_bytes`, which avoids an `image`
+  dependency.
+- **egui building blocks.** egui 0.37 renamed panels to `Panel::top/bottom/left`. Bars and buttons are
+  painted into exact rects rather than `selectable_value`, to hold the same-size rule and row order.
+- **Transport row** follows the mockup: frame-step chevrons, not ±5 s buttons. ±5 s and ±30 s are on the
+  keyboard. Frame step does nothing while playing, as in the legacy app.
+- **Preset layouts** use fractional grid units, because the mockup's tracks (3fr 4fr 3fr, a half-width back
+  camera) don't land on whole units of 12 × 8. Only custom cells snap.
+- **RecentClips is one event**, and playing into a gap jumps to the next segment, since gaps can last hours.
+- **Heading-up map.** walkers has no rotation, so its tile meshes are rotated in the paint list and drag and
+  zoom are reimplemented. Zoom pivots on the cell center, not the pointer.
+- **Lossless export** starts a new file (`<base>-front-2.mp4`) at a gap over 1 s, a missing clip, or a changed
+  avcC, timescale or size, instead of inventing time.
+- **Composited export** draws the map as the GPS polyline without tiles, which aren't reachable from the
+  worker thread. Gaps are cut, and the band's clock shows the jump.
+- **Export dialog** uses a toggle row for resolution, where the mockup has a select.
+- **Added beyond the plan:** right-click clears In or Out, a taken export name becomes `x (2).mp4`, and the
+  export folder and lanes toggle persist.
+
+Phase 0 decode numbers (synthetic Constrained Baseline clips, slowest of 6 concurrent streams; real High
+profile clips will likely be slower):
+
+| Set | Slowest stream | 1× | 4× |
+|---|---|---|---|
+| HW3, 6 × 1280×960 | 4.6× realtime | pass | pass |
+| HW4, front 2896×1876 + 5 × 1448×938 | 1.7× realtime, 1.35× on another run | pass | fail |

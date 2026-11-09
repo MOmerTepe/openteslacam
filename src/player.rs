@@ -39,9 +39,7 @@ pub struct Player {
 
 impl Player {
     /// Reads each segment's front track (or the first camera that reads) for its length and frame
-    /// times; only the moov is read.
-    // shortcut: runs on the caller's thread, ~1 ms per segment; move to a thread if hour-long
-    // RecentClips sets make opening stutter.
+    /// times; only the moov is read, but that's one file per segment: not for the UI thread.
     pub fn open(ev: &Event) -> Player {
         let t0 = ev.segments[0].start;
         let segs = ev

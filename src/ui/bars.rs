@@ -2,12 +2,13 @@
 
 use super::App;
 use super::events::{self, fmt_dur, hms};
+use super::export;
 use super::keys::Action;
 use super::settings::Layout;
-use super::theme::{self, BG, Face, Icon, LINE, Look, Row, TEXT, TEXT3, centered_strip};
+use super::theme::{self, BG, Face, Icon, LINE, LINE2, Look, Row, TEXT, TEXT3, centered_strip};
 use super::{map, timeline, vehicle};
 use crate::player::RATES;
-use eframe::egui::{Frame, Panel, Rect, Ui, pos2, vec2};
+use eframe::egui::{Frame, Panel, Rect, Response, Ui, pos2, vec2};
 
 const TOP_H: f32 = 56.0;
 const TRANSPORT_H: f32 = 36.0;
@@ -81,19 +82,27 @@ pub fn bottom_panel(app: &mut App, ui: &mut Ui) {
     Panel::bottom("bottom").exact_size(h).resizable(false).frame(Frame::NONE.fill(BG)).show(ui, |ui| {
         let full = ui.max_rect();
         let (map_cell, main) = full.split_left_right_at_x(full.min.x + map::WIDTH);
-        let coords = app.current.and_then(|i| app.events[i].info.as_ref()).and_then(|i| Some((i.est_lat?, i.est_lon?)));
-        map::cell(ui, map_cell, coords);
+        let est = app.current.and_then(|i| app.events[i].info.as_ref()).and_then(|i| Some((i.est_lat?, i.est_lon?)));
+        let view = map::View { now: app.player.as_ref().map(|p| p.position), store: app.telemetry.as_ref(), loading: app.telemetry_rx.is_some(), est };
+        let seek = map::cell(ui, map_cell, &mut app.settings, &mut app.map, view);
+        if let Some((p, t)) = app.player.as_mut().zip(seek) {
+            p.seek(t);
+        }
         ui.painter().vline(map_cell.max.x - 0.5, map_cell.y_range(), theme::line(LINE));
 
         let (strip, rest) = main.split_top_bottom_at_y(main.min.y + vehicle::HEIGHT);
-        vehicle::strip(ui, strip);
+        let now = app.player.as_ref().zip(app.telemetry.as_ref()).and_then(|(p, s)| s.at(p.position));
+        vehicle::strip(ui, strip, now, app.telemetry_rx.is_some(), app.settings.metric);
 
         let x = rest.x_range();
         let transport_r = Rect::from_x_y_ranges(x.min + 16.0..=x.max - 16.0, rest.min.y + ROW_GAP..=rest.min.y + ROW_GAP + TRANSPORT_H);
         transport(app, ui, transport_r);
         let top = transport_r.max.y + ROW_GAP;
         let scrub_r = Rect::from_x_y_ranges(transport_r.x_range(), top..=top + timeline::height(app.settings.lanes_open));
-        app.scrubbing = timeline::show(ui, scrub_r, app.player.as_mut(), &mut app.settings.lanes_open);
+        let flag = app.current.zip(app.player.as_ref()).and_then(|(i, p)| timeline::event_flag(&app.events[i], p.start));
+        let trim = app.player.as_ref().filter(|_| app.trim.is_set()).map(|p| app.trim.range(p.duration()));
+        let view = timeline::View { store: app.telemetry.as_ref(), cache: &mut app.lane_cache, flag, metric: app.settings.metric, trim };
+        app.scrubbing = timeline::show(ui, scrub_r, app.player.as_mut(), &mut app.settings.lanes_open, view);
     });
 }
 
@@ -118,10 +127,28 @@ fn transport(app: &mut App, ui: &mut Ui, rect: Rect) {
         app.apply(a);
     }
 
-    // Phase 4: enable these; they show the In/Out times and "export 30 s →".
-    theme::text_button(ui, row.right(TRIM_BTN_W, 14.0), "export →", false);
-    theme::text_button(ui, row.right(TRIM_BTN_W, 4.0), "out --:--:--", false);
-    theme::text_button(ui, row.right(TRIM_BTN_W, 14.0), "in --:--:--", false);
+    let label = app.player.as_ref().map_or("export →".to_owned(), |p| {
+        let (from, to) = app.trim.range(p.duration());
+        format!("export {} →", export::span_text(crate::export::footage(&p.segs, from, to)))
+    });
+    if theme::text_button(ui, row.right(TRIM_BTN_W, 14.0), &label, has).clicked() {
+        app.export.open = true;
+    }
+    let start = app.player.as_ref().map_or(0, |p| p.start);
+    let out = trim_button(ui, row.right(TRIM_BTN_W, 4.0), "out", app.trim.end, start, has, "Set Out point (O), right-click clears");
+    if out.clicked() {
+        app.apply(Action::TrimOut);
+    }
+    if out.secondary_clicked() {
+        app.trim.end = None;
+    }
+    let inn = trim_button(ui, row.right(TRIM_BTN_W, 14.0), "in", app.trim.start, start, has, "Set In point (I), right-click clears");
+    if inn.clicked() {
+        app.apply(Action::TrimIn);
+    }
+    if inn.secondary_clicked() {
+        app.trim.start = None;
+    }
     let w = theme::toggles_width(ui, &RATE_LABELS, 12.0);
     let active = app.player.as_ref().and_then(|p| RATES.iter().position(|r| *r == p.rate));
     if let Some(i) = theme::toggles(ui, row.right(w, 14.0), &RATE_LABELS, active, 12.0)
@@ -136,6 +163,21 @@ fn transport(app: &mut App, ui: &mut Ui, rect: Rect) {
     theme::label(painter, pos2(x, rect.min.y + 12.0), &fmt_clock(p.wall_clock()), theme::medium(18.0), TEXT, row.rest.width());
     let line2 = format!("{} / {} · segment {}/{}", fmt_dur(p.position as i64), fmt_dur(p.duration() as i64), p.segment() + 1, p.segs.len());
     theme::label(painter, pos2(x, rect.max.y - 5.0), &line2, theme::mono(11.0), TEXT3, row.rest.width());
+}
+
+/// `in 18:50:50`: the word dim, the time bright, as in the mockup.
+fn trim_button(ui: &mut Ui, rect: Rect, word: &str, at: Option<f64>, start: i64, enabled: bool, name: &str) -> Response {
+    let r = theme::button(ui, rect, Face::Text(""), Look::Normal, enabled, name).on_hover_text(name);
+    let value = at.map_or("--:--:--".to_owned(), |t| hms(start + t as i64));
+    let font = theme::mono(11.5);
+    let (word_w, value_w) = (theme::text_width(ui, word, font.clone()), theme::text_width(ui, &value, font.clone()));
+    let y = rect.center().y;
+    let x = rect.center().x - (word_w + 7.0 + value_w) / 2.0;
+    let (dim, bright) = if enabled { (TEXT3, TEXT) } else { (LINE2, LINE2) };
+    let p = ui.painter();
+    theme::label(p, pos2(x, y), word, font.clone(), dim, word_w + 1.0);
+    theme::label(p, pos2(x + word_w + 7.0, y), &value, font, bright, value_w + 1.0);
+    r
 }
 
 #[cfg(test)]

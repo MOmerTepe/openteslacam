@@ -1,5 +1,6 @@
 mod bench;
 mod decode;
+mod export;
 mod fixture;
 mod library;
 // Phase 0 scaffolding: later phases call into these modules.
@@ -10,6 +11,7 @@ mod mux;
 mod player;
 #[allow(dead_code)]
 mod sei;
+mod telemetry;
 mod ui;
 
 use std::ffi::OsString;

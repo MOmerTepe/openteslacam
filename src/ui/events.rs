@@ -167,7 +167,8 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
     let action = Panel::left("library").exact_size(WIDTH).resizable(false).frame(frame).show_collapsible(ui, &mut open, |ui| contents(ui, app));
     app.settings.library_open = open;
     match action.and_then(|r| r.inner) {
-        Some(Clicked::Open(i)) => app.open_event(i),
+        // PLAN Phase 2: these start playing 10 s before their trigger.
+        Some(Clicked::Open(i)) => app.open_event(ui.ctx(), i, matches!(app.events[i].kind, Kind::Saved | Kind::Sentry)),
         Some(Clicked::Collapse) => app.settings.library_open = false,
         Some(Clicked::Change) => app.pick_folder(ui.ctx()),
         None => {}
@@ -223,7 +224,8 @@ fn contents(ui: &mut Ui, app: &mut App) -> Option<Clicked> {
         ui.painter().hline(full.x_range(), list.max.y + 0.5, theme::line(LINE));
         ui.painter().galley(pos2(inner.min.x, list.max.y + 10.0), g, TEXT3);
     }
-    let (events, thumbs, current) = (&app.events, &app.thumbs, app.current);
+    // The clicked row lights up at once, even if its event takes a moment to open.
+    let (events, thumbs, current) = (&app.events, &app.thumbs, app.opening.as_ref().map_or(app.current, |o| Some(o.event)));
     ui.scope_builder(UiBuilder::new().max_rect(list), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, ROW_H, rows.len(), |ui, range| {

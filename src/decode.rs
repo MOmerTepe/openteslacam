@@ -155,6 +155,13 @@ const CATCH_UP: f64 = 0.5;
 /// While lagging in Play mode, convert and show a frame at most this often.
 const LAG_REFRESH: Duration = Duration::from_millis(25);
 
+/// `seconds` in track ticks. The margin keeps a time computed as pts / timescale, often with a
+/// segment start added and taken off again, from rounding below that pts. A thousandth of a tick
+/// is far below any frame spacing and covers event times of many days.
+pub(crate) fn pts_at(seconds: f64, timescale: u32) -> u64 {
+    (seconds.max(0.0) * timescale.max(1) as f64 + 1e-3) as u64
+}
+
 /// Display-order target: the sample with the largest pts <= `pts`, else the earliest one.
 pub(crate) fn target_sample(samples: &[Sample], pts: u64) -> usize {
     let mut best: Option<usize> = None;
@@ -187,12 +194,12 @@ pub(crate) fn must_seek(mode: Mode, key: usize, next_feed: usize, tgt_pts: u64, 
     key > next_feed && (mode != Mode::Play || behind > CATCH_UP)
 }
 
-struct Loaded {
-    track: Track,
-    file: File,
+pub(crate) struct Loaded {
+    pub(crate) track: Track,
+    pub(crate) file: File,
 }
 
-fn load(files: &[Option<PathBuf>], seg: usize) -> Result<Loaded, String> {
+pub(crate) fn load(files: &[Option<PathBuf>], seg: usize) -> Result<Loaded, String> {
     let p = files.get(seg).and_then(Option::as_ref).ok_or("no clip")?;
     let err = |e: &dyn std::fmt::Display| format!("{}: {e}", p.display());
     let track = mp4::read_track(p).map_err(|e| err(&e))?;
@@ -372,9 +379,7 @@ impl Worker {
             return;
         };
         let samples = &l.track.samples;
-        let ts = l.track.timescale.max(1) as f64;
-        // The epsilon keeps a time computed as pts / timescale from rounding below that pts.
-        let mut sample = target_sample(samples, (local.max(0.0) * ts + 1e-6) as u64);
+        let mut sample = target_sample(samples, pts_at(local, l.track.timescale));
         if mode == Mode::Keyframes {
             sample = key_before(samples, sample);
         }
@@ -386,7 +391,7 @@ impl Worker {
         let t = Target { seg, sample, pts: samples[sample].pts, mode };
         let key = key_before(samples, sample);
         let fed = samples[self.feed.next.min(samples.len() - 1)].pts;
-        let behind = t.pts.saturating_sub(fed) as f64 / ts;
+        let behind = t.pts.saturating_sub(fed) as f64 / l.track.timescale.max(1) as f64;
         if self.dec.is_none() || must_seek(mode, key, self.feed.next, t.pts, self.feed.last_out, behind) {
             match CamDecoder::new(&l.track) {
                 Ok(d) => self.dec = Some(d),
@@ -449,6 +454,21 @@ mod tests {
     use crate::mux::Muxer;
     use std::path::Path;
     use std::process::Command;
+
+    #[test]
+    fn a_frame_time_maps_back_to_its_pts_at_any_segment_start() {
+        for start in [0.0, 2.0, 49.0, 85.0, 3600.0, 2_000_000.0] {
+            for ts in [36_000u32, 18_432, 90_000] {
+                for k in 0..2000u64 {
+                    let pts = k * u64::from(ts) / 36;
+                    let t = start + pts as f64 / f64::from(ts);
+                    assert_eq!(pts_at(t - start, ts), pts, "start {start}, timescale {ts}");
+                }
+            }
+        }
+        assert_eq!(pts_at(-1.0, 36_000), 0);
+        assert_eq!(pts_at(0.5, 0), 0, "a broken timescale doesn't divide anything");
+    }
 
     fn ffmpeg(args: &[&str]) -> Option<Vec<u8>> {
         let out = Command::new("ffmpeg").args(["-v", "error", "-y"]).args(args).output().ok()?;
