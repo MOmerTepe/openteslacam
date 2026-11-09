@@ -1,4 +1,4 @@
-# OpenTeslaCam (Rust): plan
+# OpenTeslaCam 2.0 (Rust): plan
 
 A native port of `openteslacam-legacy/` (Electron + Leaflet + GridStack + Tesla's JS parser).
 It does the same job: open a `TeslaCam` folder, play all 6 cameras in sync on one timeline,

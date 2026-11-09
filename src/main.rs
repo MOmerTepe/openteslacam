@@ -24,6 +24,7 @@ use std::process::ExitCode;
 
 const USAGE: &str = "usage:
   openteslacam [folder]                      open the viewer (on a TeslaCam folder)
+  openteslacam --version                     print the version
   openteslacam --dump-sei <clip.mp4>         print SEI telemetry as CSV (same CSV as Tesla's sei_extractor.py)
   openteslacam --scan <folder>               list the events found in a TeslaCam folder
   openteslacam --bench-decode <folder|clip.mp4>...   decode up to 6 clips at once and report speed
@@ -36,6 +37,10 @@ fn main() -> ExitCode {
         attach_console();
     }
     let res = match args.first().and_then(|a| a.to_str()) {
+        Some("--version") if args.len() == 1 => {
+            println!("openteslacam {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         Some("--dump-sei") if args.len() == 2 => dump_sei(Path::new(&args[1])),
         Some("--bench-decode") if args.len() >= 2 => bench::bench_decode(&args[1..]),
         Some("--bench-synthetic") if args.len() == 1 => bench::bench_synthetic(),

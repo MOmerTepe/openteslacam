@@ -1,10 +1,16 @@
 [package]
 name = "openteslacam"
-version = "0.1.0"
+version.workspace = true
+license.workspace = true
 edition = "2024"
 
 [workspace]
 members = ["installer"]
+
+# One version for the app and its installer. scripts/build-installer.ps1 reads it too.
+[workspace.package]
+version = "2.0.0"
+license = "MIT"
 
 [dependencies]
 eframe = { version = "0.37.0", features = ["persistence"] }

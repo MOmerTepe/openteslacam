@@ -215,7 +215,7 @@ impl App {
         let mid = full.min.y + HEADER_H / 2.0;
         let x = full.min.x + PAD;
         let w = theme::label(p, pos2(x, mid), "openteslacam", medium(15.0), TEXT, 200.0);
-        let what = if self.uninstall_dir.is_some() { "uninstall" } else { "setup" };
+        let what = if self.uninstall_dir.is_some() { "uninstall" } else { concat!("setup ", env!("CARGO_PKG_VERSION")) };
         theme::label(p, pos2(x + w + 12.0, mid), what, mono(12.0), TEXT3, 120.0);
         let steps: &[&str] = if self.uninstall_dir.is_some() { &["confirm", "remove"] } else { &["options", "install", "done"] };
         let active = match self.page {
