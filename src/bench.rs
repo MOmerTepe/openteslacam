@@ -4,6 +4,7 @@ use crate::decode::{CamDecoder, to_rgba};
 use crate::fixture::{FPS, encode_clip, rng};
 use crate::library::CAMERAS;
 use crate::mp4;
+use std::ffi::OsString;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -88,12 +89,12 @@ fn run(paths: &[PathBuf]) -> Result<(), String> {
 }
 
 /// `--bench-decode`: each argument is a clip or a folder of clips; at most 6 run (like 6 cameras).
-pub fn bench_decode(args: &[String]) -> Result<(), String> {
+pub fn bench_decode(args: &[OsString]) -> Result<(), String> {
     let mut paths = Vec::new();
     for a in args {
         let p = PathBuf::from(a);
         if p.is_dir() {
-            let rd = std::fs::read_dir(&p).map_err(|e| format!("{a}: {e}"))?;
+            let rd = std::fs::read_dir(&p).map_err(|e| format!("{}: {e}", p.display()))?;
             let mut clips: Vec<_> = rd
                 .filter_map(|e| Some(e.ok()?.path()))
                 .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("mp4")))

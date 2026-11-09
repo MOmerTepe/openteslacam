@@ -1,5 +1,5 @@
-//! Scans a TeslaCam folder into events. Only directory entries, event.json and one MP4 header
-//! per event are read, so hundreds of events scan quickly; segment durations come later
+//! Scans a TeslaCam folder into events. Only directory entries, event.json and normally one MP4
+//! header per event are read, so hundreds of events scan quickly; segment durations come later
 //! (`Player::open`).
 
 use crate::mp4::{self, Mp4Error};
@@ -33,6 +33,7 @@ pub struct EventInfo {
     pub timestamp: Option<i64>,
     pub reason: String,
     pub city: String,
+    pub street: String,
     pub est_lat: Option<f64>,
     pub est_lon: Option<f64>,
     pub camera: String,
@@ -55,6 +56,13 @@ impl Event {
     // shortcut: assumes Tesla's ~60 s segments and ignores gaps, exact once the event is opened.
     pub fn approx_duration(&self) -> i64 {
         self.segments.last().map_or(0, |l| l.start - self.segments[0].start + 60)
+    }
+
+    /// What the library lists and sorts it by: the trigger, else the folder name's time (as in the
+    /// legacy app), else the newest footage. RecentClips has no single moment, so it's the last.
+    pub fn time(&self) -> i64 {
+        let named = || if self.kind == Kind::Recent { None } else { stamp(&self.name) };
+        self.info.as_ref().and_then(|i| i.timestamp).or_else(named).unwrap_or_else(|| self.segments.last().map_or(0, |s| s.start))
     }
 }
 
@@ -137,6 +145,8 @@ fn subdirs(dir: &Path) -> io::Result<Vec<PathBuf>> {
 /// Accepts a TeslaCam root (or a folder holding one), one SavedClips/SentryClips/RecentClips
 /// folder, or one event folder. Newest event first.
 pub fn scan(dir: &Path) -> io::Result<Vec<Event>> {
+    // A relative path may have no name or parent to go by.
+    let dir = &std::path::absolute(dir)?;
     let mut events = Vec::new();
     if let Some(kind) = kind_of(&file_name(dir)) {
         scan_kind(dir, kind, &mut events)?;
@@ -149,14 +159,30 @@ pub fn scan(dir: &Path) -> io::Result<Vec<Event>> {
         if roots.is_empty() {
             let parent = dir.parent().map(file_name).unwrap_or_default();
             let kind = kind_of(&parent).filter(|&k| k != Kind::Recent).unwrap_or(Kind::Folder);
-            events.extend(scan_event(dir, kind, file_name(dir))?);
+            let event = scan_event(dir, kind, file_name(dir))?;
+            // A copied event folder still is one, as in the legacy app.
+            events.extend(event.map(|e| Event { kind: if e.kind == Kind::Folder && e.info.is_some() { Kind::Saved } else { e.kind }, ..e }));
         }
-        for (p, kind) in roots {
-            scan_kind(p, kind, &mut events)?;
+        scan_roots(&roots, &mut events)?;
+    }
+    events.sort_by_key(|e| std::cmp::Reverse(e.time()));
+    Ok(events)
+}
+
+/// One unreadable kind folder must not hide the others; it fails the scan only if nothing else
+/// turned up.
+// shortcut: next to readable folders the failure goes unreported, show it in the library if people miss footage.
+fn scan_roots(roots: &[(&PathBuf, Kind)], out: &mut Vec<Event>) -> io::Result<()> {
+    let mut err = None;
+    for (p, kind) in roots {
+        if let Err(e) = scan_kind(p, *kind, out) {
+            err.get_or_insert(e);
         }
     }
-    events.sort_by_key(|e| std::cmp::Reverse(e.segments[0].start));
-    Ok(events)
+    match err {
+        Some(e) if out.is_empty() => Err(e),
+        _ => Ok(()),
+    }
 }
 
 /// RecentClips is flat and becomes one event (its gaps show on the timeline); the others hold
@@ -193,8 +219,9 @@ fn scan_event(dir: &Path, kind: Kind, name: String) -> io::Result<Option<Event>>
         return Ok(None);
     }
     let segments: Vec<Segment> = segs.into_iter().map(|(start, files)| Segment { start, files }).collect();
-    let probe = segments[0].files.iter().flatten().next().expect("a segment has at least one file");
-    let encrypted = matches!(mp4::read_track(probe), Err(Mp4Error::Encrypted));
+    // Only if every camera with data agrees: one damaged file must not lock playable footage away.
+    let mut probes = segments[0].files.iter().flatten().filter(|p| fs::metadata(p).is_ok_and(|m| m.len() > 0)).peekable();
+    let encrypted = probes.peek().is_some() && probes.all(|p| matches!(mp4::read_track(p), Err(Mp4Error::Encrypted)));
     let info = json.and_then(|p| fs::read(p).ok()).and_then(|b| parse_event_json(&b));
     Ok(Some(Event { kind, name, dir: dir.to_path_buf(), segments, info, thumb, encrypted }))
 }
@@ -212,6 +239,7 @@ pub fn parse_event_json(bytes: &[u8]) -> Option<EventInfo> {
         timestamp: stamp(&s("timestamp")),
         reason: s("reason"),
         city: s("city"),
+        street: s("street"),
         est_lat: f("est_lat"),
         est_lon: f("est_lon"),
         camera: s("camera"),
@@ -258,10 +286,11 @@ mod tests {
 
     #[test]
     fn event_json() {
-        let j = br#"{"timestamp":"2026-03-14T15:30:38","city":"Berlin","est_lat":"52.5163","est_lon":13.3777,"reason":"user_interaction_honk","camera":"0"}"#;
+        let j = br#"{"timestamp":"2026-03-14T15:30:38","city":"Berlin","street":"Unter den Linden","est_lat":"52.5163","est_lon":13.3777,"reason":"user_interaction_honk","camera":"0"}"#;
         let i = parse_event_json(j).unwrap();
         assert_eq!(i.timestamp, stamp("2026-03-14_15-30-38"));
         assert_eq!((i.city.as_str(), i.reason.as_str(), i.camera.as_str()), ("Berlin", "user_interaction_honk", "0"));
+        assert_eq!(i.street, "Unter den Linden");
         assert_eq!((i.est_lat, i.est_lon), (Some(52.5163), Some(13.3777)));
         let i = parse_event_json(br#"{"est_lat":"","reason":5}"#).unwrap();
         assert_eq!((i.timestamp, i.est_lat, i.reason.as_str()), (None, None, "5"));
@@ -349,7 +378,58 @@ mod tests {
         touch(&loose, &["2026-01-01_00-00-00-back.mp4"], FTYP);
         let l = scan(&loose).unwrap();
         assert_eq!((l[0].kind, l[0].name.as_str()), (Kind::Folder, "loose"));
+        // With an event.json it's a saved event wherever it was copied to.
+        touch(&loose, &["event.json"], br#"{"timestamp":"2026-01-01T00:00:30"}"#);
+        assert_eq!(scan(&loose).unwrap()[0].kind, Kind::Saved);
         assert!(scan(&t.0.join("TeslaCam/SentryClips/empty")).unwrap().is_empty());
         assert!(scan(&t.0.join("missing")).is_err());
+    }
+
+    #[test]
+    fn one_unreadable_kind_folder_does_not_hide_the_others() {
+        let t = tmp("kinds");
+        tree(&t.0);
+        let (saved, missing) = (t.0.join("SavedClips"), t.0.join("SentryClips-gone"));
+        let mut events = Vec::new();
+        scan_roots(&[(&missing, Kind::Sentry), (&saved, Kind::Saved)], &mut events).unwrap();
+        assert_eq!(events.len(), 1);
+        // Nothing else turned up: the error is the result.
+        assert!(scan_roots(&[(&missing, Kind::Sentry)], &mut Vec::new()).is_err());
+    }
+
+    fn encrypted(tag: &str, files: &[(&str, &[u8])]) -> bool {
+        let t = tmp(tag);
+        for (n, data) in files {
+            touch(&t.0, &[n], data);
+        }
+        scan(&t.0).unwrap()[0].encrypted
+    }
+
+    #[test]
+    fn encrypted_means_every_camera_with_data() {
+        const LOCKED: &[u8] = &[0x5A; 64];
+        let (front, back) = ("2026-03-14_15-30-00-front.mp4", "2026-03-14_15-30-00-back.mp4");
+        assert!(encrypted("enc-all", &[(front, LOCKED), (back, LOCKED)]));
+        assert!(encrypted("enc-empty-first", &[(front, b""), (back, LOCKED)]), "an empty file says nothing");
+        assert!(!encrypted("enc-zeroed", &[(front, &[0; 4096]), (back, FTYP)]), "one zero-filled camera");
+        assert!(!encrypted("enc-all-zeroed", &[(front, &[0; 4096]), (back, &[0; 4096])]), "zeros aren't encryption");
+        assert!(!encrypted("enc-garbled", &[(front, LOCKED), (back, FTYP)]), "another camera is a real MP4");
+        assert!(!encrypted("enc-empty", &[(front, b"")]));
+    }
+
+    #[test]
+    fn events_sort_by_the_time_they_list() {
+        let t = tmp("sort");
+        // Segments start long before the trigger, and RecentClips ran until after both.
+        let saved = t.0.join("SavedClips/2026-03-14_15-31-00");
+        touch(&saved, &["2026-03-14_15-21-00-front.mp4"], FTYP);
+        touch(&saved, &["event.json"], br#"{"timestamp":"2026-03-14T15:31:00"}"#);
+        touch(&t.0.join("SentryClips/2026-03-14_15-25-00"), &["2026-03-14_15-24-00-front.mp4"], FTYP);
+        touch(&t.0.join("RecentClips"), &["2026-03-14_15-00-00-front.mp4", "2026-03-14_18-00-00-front.mp4"], FTYP);
+        let ev = scan(&t.0).unwrap();
+        assert_eq!(ev.iter().map(|e| e.kind).collect::<Vec<_>>(), [Kind::Recent, Kind::Saved, Kind::Sentry]);
+        assert_eq!(ev[0].time(), stamp("2026-03-14_18-00-00").unwrap());
+        assert_eq!(ev[1].time(), stamp("2026-03-14_15-31-00").unwrap());
+        assert_eq!(ev[2].time(), stamp("2026-03-14_15-25-00").unwrap(), "no event.json: the folder's name");
     }
 }

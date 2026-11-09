@@ -160,7 +160,8 @@ fn read_moov(f: &mut File, len: u64) -> Result<Vec<u8>, Mp4Error> {
         let mut size = u32::from_be_bytes([h[0], h[1], h[2], h[3]]) as u64;
         let typ = &h[4..8];
         if pos == 0 && typ != b"ftyp" {
-            return Err(Mp4Error::Encrypted);
+            // Power loss on a FAT drive can leave a zero-filled file; that isn't encryption.
+            return Err(if h == [0; 8] { bad("zero-filled file") } else { Mp4Error::Encrypted });
         }
         let mut hl = 8;
         if size == 1 {
@@ -543,6 +544,15 @@ mod tests {
         let r = read_track(&path);
         std::fs::remove_file(&path).unwrap();
         assert!(matches!(r, Err(Mp4Error::Malformed(m)) if m.contains("truncated")));
+    }
+
+    #[test]
+    fn zeros_are_not_encrypted() {
+        let path = tmp("zeros");
+        std::fs::write(&path, [0u8; 4096]).unwrap();
+        let r = read_track(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert!(matches!(r, Err(Mp4Error::Malformed(m)) if m.contains("zero")));
     }
 
     #[test]

@@ -1,46 +1,41 @@
 mod bench;
 mod decode;
 mod fixture;
-// The UI (next step) uses the rest of these APIs.
-#[allow(dead_code)]
 mod library;
 // Phase 0 scaffolding: later phases call into these modules.
 #[allow(dead_code)]
 mod mp4;
 #[allow(dead_code)]
 mod mux;
-#[allow(dead_code)]
 mod player;
 #[allow(dead_code)]
 mod sei;
-mod view;
+mod ui;
 
+use std::ffi::OsString;
 use std::io::{self, BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "usage:
+  openteslacam [folder]                      open the viewer (on a TeslaCam folder)
   openteslacam --dump-sei <clip.mp4>         print SEI telemetry as CSV (same CSV as Tesla's sei_extractor.py)
-  openteslacam --view <clip.mp4>             decode one camera into a window
   openteslacam --scan <folder>               list the events found in a TeslaCam folder
   openteslacam --bench-decode <folder|clip.mp4>...   decode up to 6 clips at once and report speed
   openteslacam --bench-synthetic             same benchmark on generated HW3/HW4-sized clips";
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let res = match args.first().map(String::as_str) {
+    // Not `args()`: it panics on a Windows path that isn't valid Unicode.
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let res = match args.first().and_then(|a| a.to_str()) {
         Some("--dump-sei") if args.len() == 2 => dump_sei(Path::new(&args[1])),
-        Some("--view") if args.len() == 2 => view::view(Path::new(&args[1])),
         Some("--bench-decode") if args.len() >= 2 => bench::bench_decode(&args[1..]),
         Some("--bench-synthetic") if args.len() == 1 => bench::bench_synthetic(),
         Some("--scan") if args.len() == 2 => scan(Path::new(&args[1])),
         // Hidden: writes a synthetic TeslaCam tree (20 s segments, 640x480) for testing the viewer.
         Some("--make-fixture") if args.len() == 2 => fixture::make_fixture(Path::new(&args[1]), 20, 640, 480),
-        // Phase 1: no arguments will open the GUI here.
-        None => {
-            println!("{USAGE}");
-            return ExitCode::SUCCESS;
-        }
+        _ if args.is_empty() => ui::run(None),
+        _ if args.len() == 1 && Path::new(&args[0]).is_dir() => ui::run(Some(PathBuf::from(&args[0]))),
         _ => Err(USAGE.to_string()),
     };
     match res {

@@ -6,7 +6,9 @@ use eframe::egui::{ColorImage, Context};
 use openh264::OpenH264API;
 use openh264::decoder::{DecodedYUV, Decoder, DecoderConfig, Flush};
 use openh264::formats::YUVSource;
+use std::cell::Cell;
 use std::fs::File;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -89,12 +91,12 @@ pub struct FrameOut {
     pub image: ColorImage,
 }
 
-/// Latest-only hand-off to the UI. `Err` says why the camera has no picture for the target
-/// segment (no clip, unreadable clip).
-pub type Slot = Arc<Mutex<Option<Result<FrameOut, String>>>>;
+/// Latest-only hand-off to the UI, tagged with the `open` it belongs to. `Err` says why the
+/// camera has no picture for the target (no clip, unreadable clip, damaged frame).
+type Slot = Arc<Mutex<Option<(u64, Result<FrameOut, String>)>>>;
 
 enum Cmd {
-    Open(Vec<Option<PathBuf>>),
+    Open(u64, Vec<Option<PathBuf>>),
     Seek(usize, f64, Mode),
     Shutdown,
 }
@@ -103,6 +105,8 @@ enum Cmd {
 pub struct CamWorker {
     tx: Sender<Cmd>,
     slot: Slot,
+    /// Counts `open` calls: the worker may still publish for the old event until it gets there.
+    generation: Cell<u64>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -113,12 +117,13 @@ impl CamWorker {
         let slot = Slot::default();
         let w = Worker::new(slot.clone(), ctx);
         let thread = thread::Builder::new().name(format!("decode-{name}")).spawn(move || w.run(rx)).expect("spawn decoder thread");
-        CamWorker { tx, slot, thread: Some(thread) }
+        CamWorker { tx, slot, generation: Cell::new(0), thread: Some(thread) }
     }
 
     /// This camera's clip per segment (`None` where it didn't record). Forgets the old event.
     pub fn open(&self, files: Vec<Option<PathBuf>>) {
-        let _ = self.tx.send(Cmd::Open(files));
+        self.generation.set(self.generation.get() + 1);
+        let _ = self.tx.send(Cmd::Open(self.generation.get(), files));
     }
 
     /// Show the latest frame with pts <= `local` seconds into segment `seg`. Cheap: send it every
@@ -127,9 +132,10 @@ impl CamWorker {
         let _ = self.tx.send(Cmd::Seek(seg, local, mode));
     }
 
-    /// The newest result since the last call, if any.
+    /// The newest result for the current `open` since the last call, if any.
     pub fn take(&self) -> Option<Result<FrameOut, String>> {
-        self.slot.lock().ok()?.take()
+        let (generation, r) = self.slot.lock().ok()?.take()?;
+        (generation == self.generation.get()).then_some(r)
     }
 }
 
@@ -206,11 +212,17 @@ struct Feed {
     last_out: Option<u64>,
 }
 
+/// `Publisher::shown` sample once the tile was told its picture is lost.
+const LOST: usize = usize::MAX;
+
 struct Publisher {
     slot: Slot,
+    generation: u64,
     ctx: Context,
     rgba: Vec<u8>,
     shown: Option<(usize, usize)>,
+    /// A span of pts in a segment with no pictures, found out the hard way: re-decoding can't help.
+    lost: Option<(usize, Range<u64>)>,
     at: Instant,
 }
 
@@ -219,7 +231,7 @@ impl Publisher {
         self.shown = r.as_ref().ok().map(|f| (f.seg, f.sample));
         self.at = Instant::now();
         if let Ok(mut s) = self.slot.lock() {
-            *s = Some(r);
+            *s = Some((self.generation, r));
         }
         self.ctx.request_repaint();
     }
@@ -228,6 +240,18 @@ impl Publisher {
         let (w, h) = to_rgba(yuv, &mut self.rgba);
         let image = ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &self.rgba);
         self.put(Ok(FrameOut { seg, sample, image }));
+    }
+
+    /// Whether `pts` is in the known lost span; if so the tile hears about it, once.
+    fn in_lost(&mut self, seg: usize, pts: u64) -> bool {
+        if !self.lost.as_ref().is_some_and(|(s, span)| *s == seg && span.contains(&pts)) {
+            return false;
+        }
+        if self.shown != Some((seg, LOST)) {
+            self.put(Err("damaged frame".to_owned()));
+            self.shown = Some((seg, LOST));
+        }
+        true
     }
 }
 
@@ -238,13 +262,19 @@ struct Target {
     mode: Mode,
 }
 
-/// Matches a decoded picture to its sample and shows it if wanted; true once the target is out.
+/// Matches a decoded picture to its sample and shows it if wanted; true once the target is out or
+/// known to be lost.
 fn picture(yuv: &DecodedYUV, feed: &mut Feed, out: &mut Publisher, t: &Target) -> bool {
     let Some(i) = (0..feed.pending.len()).min_by_key(|&i| feed.pending[i].0) else { return false };
     let (pts, sample) = feed.pending.swap_remove(i);
-    feed.last_out = Some(pts);
-    // `pts >= t.pts` also ends the search when a damaged stream lost the target picture.
-    let reached = sample == t.sample || pts >= t.pts;
+    let prev = feed.last_out.replace(pts);
+    // Pictures come out in pts order, so a later one means damage swallowed the target. It must
+    // not be shown: the tile would run ahead of the other cameras.
+    if pts > t.pts {
+        out.lost = Some((t.seg, prev.map_or(t.pts, |p| p + 1)..pts));
+        return true;
+    }
+    let reached = sample == t.sample;
     if reached || (t.mode == Mode::Play && out.at.elapsed() >= LAG_REFRESH) {
         out.frame(t.seg, sample, yuv);
     }
@@ -254,7 +284,7 @@ fn picture(yuv: &DecodedYUV, feed: &mut Feed, out: &mut Publisher, t: &Target) -
 struct Worker {
     files: Vec<Option<PathBuf>>,
     cur: Option<(usize, Result<Loaded, String>)>,
-    /// The following segment, opened ahead so a boundary doesn't wait on disk.
+    /// The following segment, opened ahead (before going idle) so a boundary doesn't wait on disk.
     next: Option<(usize, Result<Loaded, String>)>,
     /// None: the next step restarts from a keyframe.
     dec: Option<CamDecoder>,
@@ -267,7 +297,7 @@ struct Worker {
 
 impl Worker {
     fn new(slot: Slot, ctx: Context) -> Worker {
-        let out = Publisher { slot, ctx, rgba: Vec::new(), shown: None, at: Instant::now() };
+        let out = Publisher { slot, generation: 0, ctx, rgba: Vec::new(), shown: None, lost: None, at: Instant::now() };
         Worker { files: Vec::new(), cur: None, next: None, dec: None, feed: Feed::default(), out, target: None, idle: true }
     }
 
@@ -284,9 +314,10 @@ impl Worker {
             for cmd in first.into_iter().chain(rx.try_iter()) {
                 match cmd {
                     Cmd::Shutdown => return,
-                    Cmd::Open(files) => {
+                    Cmd::Open(generation, files) => {
                         self.files = files;
-                        (self.cur, self.next, self.dec, self.target, self.out.shown) = (None, None, None, None, None);
+                        self.out.generation = generation;
+                        (self.cur, self.next, self.dec, self.target, self.out.shown, self.out.lost) = (None, None, None, None, None, None);
                         if let Ok(mut s) = self.out.slot.lock() {
                             *s = None;
                         }
@@ -301,6 +332,20 @@ impl Worker {
             if !self.idle {
                 self.step();
             }
+        }
+    }
+
+    /// The clip can't be read or decoded: later targets in this segment settle without trying again.
+    fn give_up(&mut self, seg: usize, msg: String) {
+        self.out.put(Err(msg.clone()));
+        self.cur = Some((seg, Err(msg)));
+        self.dec = None;
+        self.idle = true;
+    }
+
+    fn preload(&mut self, seg: usize) {
+        if seg + 1 < self.files.len() && self.next.as_ref().is_none_or(|n| n.0 != seg + 1) {
+            self.next = Some((seg + 1, load(&self.files, seg + 1)));
         }
     }
 
@@ -321,7 +366,6 @@ impl Worker {
             }
             self.cur = Some((seg, l));
             self.dec = None;
-            self.next = (seg + 1 < self.files.len()).then(|| (seg + 1, load(&self.files, seg + 1)));
         }
         let Some((_, Ok(l))) = &mut self.cur else {
             self.idle = true;
@@ -334,8 +378,9 @@ impl Worker {
         if mode == Mode::Keyframes {
             sample = key_before(samples, sample);
         }
-        if self.out.shown == Some((seg, sample)) {
+        if self.out.shown == Some((seg, sample)) || self.out.in_lost(seg, samples[sample].pts) {
             self.idle = true;
+            self.preload(seg);
             return;
         }
         let t = Target { seg, sample, pts: samples[sample].pts, mode };
@@ -345,32 +390,24 @@ impl Worker {
         if self.dec.is_none() || must_seek(mode, key, self.feed.next, t.pts, self.feed.last_out, behind) {
             match CamDecoder::new(&l.track) {
                 Ok(d) => self.dec = Some(d),
-                Err(e) => {
-                    self.out.put(Err(e));
-                    self.idle = true;
-                    return;
-                }
+                Err(e) => return self.give_up(seg, e),
             }
             self.feed = Feed { next: key, ..Feed::default() };
         }
         let Some(dec) = self.dec.as_mut() else { return };
 
-        let mut reached = false;
+        let mut done = false;
         if self.feed.next < samples.len() {
             let i = self.feed.next;
             self.feed.next += 1;
             let s = &samples[i];
             let data = match mp4::read_sample(&mut l.file, s) {
                 Ok(d) => d,
-                Err(e) => {
-                    self.out.put(Err(format!("read: {e}")));
-                    self.idle = true;
-                    return;
-                }
+                Err(e) => return self.give_up(seg, format!("read: {e}")),
             };
             self.feed.pending.push((s.pts, i));
             match dec.decode(&data, s.key) {
-                Ok(Some(yuv)) => reached = picture(&yuv, &mut self.feed, &mut self.out, &t),
+                Ok(Some(yuv)) => done = picture(&yuv, &mut self.feed, &mut self.out, &t),
                 Ok(None) => {}
                 // A damaged frame yields no picture; forget it so later pictures still match.
                 Err(_) => self.feed.pending.retain(|p| p.1 != i),
@@ -379,17 +416,28 @@ impl Worker {
         // Keyframes mode feeds nothing past the keyframe, and at the clip's end there is nothing
         // more to feed: either way the reorder buffer has to give up what it holds.
         let fed_all = self.feed.next >= samples.len() || (mode == Mode::Keyframes && self.feed.next > sample);
-        if !reached && fed_all {
+        if !done && fed_all {
             for yuv in dec.flush().unwrap_or_default() {
-                reached |= picture(&yuv, &mut self.feed, &mut self.out, &t);
+                // Stop here: later pictures would overwrite the target in the slot.
+                if picture(&yuv, &mut self.feed, &mut self.out, &t) {
+                    done = true;
+                    break;
+                }
+            }
+            if !done {
+                // No picture at or after the target in this pass. At the clip's end that covers the
+                // rest of the clip; a damaged keyframe only itself.
+                let end = if self.feed.next >= samples.len() { u64::MAX } else { t.pts + 1 };
+                self.out.lost = Some((seg, self.feed.last_out.map_or(t.pts, |p| p + 1)..end));
+                done = true;
             }
             // Decoding on after a flush isn't relied on: the next step restarts at a keyframe.
             self.dec = None;
-            // Not reached even so (damaged clip): wait for a new target instead of spinning.
-            self.idle = true;
         }
-        if reached {
+        if done {
+            self.out.in_lost(seg, t.pts);
             self.idle = true;
+            self.preload(seg);
         }
     }
 }
@@ -399,6 +447,7 @@ mod tests {
     use super::*;
     use crate::mp4;
     use crate::mux::Muxer;
+    use std::path::Path;
     use std::process::Command;
 
     fn ffmpeg(args: &[&str]) -> Option<Vec<u8>> {
@@ -462,6 +511,28 @@ mod tests {
         std::fs::remove_file(&out).unwrap();
     }
 
+    /// A b-pyramid stream holds several pictures at its end: a cold seek to one of the last frames
+    /// must show that frame, not whatever the flush returns last.
+    #[test]
+    fn pyramid_frames_at_the_clip_end_settle_on_the_target() {
+        let path = std::env::temp_dir().join(format!("otc-pyr-{}.mp4", std::process::id()));
+        let p = path.to_str().unwrap();
+        let args = ["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30", "-frames:v", "60", "-c:v", "libx264", "-profile:v", "high"];
+        if ffmpeg(&[&args[..], &["-bf", "3", "-x264-params", "b-pyramid=2", "-g", "30", p]].concat()).is_none() {
+            println!("skipped: ffmpeg not on PATH");
+            return;
+        }
+        let t = mp4::read_track(&path).unwrap();
+        let d = t.samples[0].dur as u64;
+        for k in [59u64, 58, 57, 56] {
+            let w = CamWorker::spawn("pyr", Context::default());
+            w.open(vec![Some(path.clone())]);
+            let want = t.samples.iter().position(|s| s.pts == k * d).unwrap();
+            assert_eq!(once(&w, 0, (k * d) as f64 / t.timescale as f64, Mode::Exact), Ok((0, want)), "frame {k}");
+        }
+        std::fs::remove_file(&path).unwrap();
+    }
+
     fn sample(pts: u64, key: bool) -> Sample {
         Sample { offset: 0, size: 0, dts: 0, pts, dur: 1, key }
     }
@@ -512,23 +583,177 @@ mod tests {
         }
     }
 
-    #[test]
-    fn worker_follows_targets() {
-        use crate::fixture::{FPS, encode_clip};
+    /// Reissues the target for a while like the UI's repaints do, and returns everything published.
+    fn settle(w: &CamWorker, seg: usize, local: f64, mode: Mode) -> Vec<Result<(usize, usize), String>> {
+        let mut got = Vec::new();
+        let t0 = Instant::now();
+        let mut quiet = Instant::now();
+        while quiet.elapsed() < Duration::from_millis(150) {
+            assert!(t0.elapsed() < Duration::from_secs(30), "never settled: {} results", got.len());
+            w.seek(seg, local, mode);
+            if let Some(r) = w.take() {
+                got.push(r.map(|f| (f.seg, f.sample)));
+                quiet = Instant::now();
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        got
+    }
+
+    /// The worker's one answer: however long it takes, and nothing may follow it.
+    fn once(w: &CamWorker, seg: usize, local: f64, mode: Mode) -> Result<(usize, usize), String> {
+        let r = wait(w, seg, local, mode);
+        assert_eq!(settle(w, seg, local, mode), [], "more answers after {r:?}");
+        r
+    }
+
+    fn damaged() -> Result<(usize, usize), String> {
+        Err("damaged frame".to_owned())
+    }
+
+    fn gradient_clip(tag: &str, frames: usize) -> PathBuf {
+        use crate::fixture::encode_clip;
         use crate::sei;
-        let path = std::env::temp_dir().join(format!("otc-worker-{}.mp4", std::process::id()));
+        let path = std::env::temp_dir().join(format!("otc-{tag}-{}.mp4", std::process::id()));
         let (w, h) = (128, 96);
         // Moving gradient, with a Tesla-style SEI NAL in every sample like the front camera.
-        encode_clip(&path, w, h, 200_000, 80, |t, yuv| {
+        encode_clip(&path, w, h, 200_000, frames, |t, yuv| {
             yuv.extend((0..w * h).map(|i| (i % w + t * 3) as u8));
             yuv.extend(std::iter::repeat_n(128, w * h / 2));
             Some(sei::sei_nal(&sei::encode_metadata(&sei::Telemetry { frame_seq_no: t as u64 + 1, ..Default::default() })))
         })
         .unwrap();
+        path
+    }
+
+    /// Overwrites these samples with noise in the file.
+    fn damage(path: &Path, samples: &[&Sample]) {
+        use std::io::{Seek, SeekFrom, Write};
+        let mut f = File::options().write(true).open(path).unwrap();
+        let mut seed = 7;
+        for s in samples {
+            let noise: Vec<u8> = (0..s.size).map(|_| crate::fixture::rng(&mut seed) as u8).collect();
+            f.seek(SeekFrom::Start(s.offset)).unwrap();
+            f.write_all(&noise).unwrap();
+        }
+    }
+
+    fn at(k: f64) -> f64 {
+        k / crate::fixture::FPS as f64
+    }
+
+    #[test]
+    fn a_damaged_frame_settles_and_never_shows_the_future() {
+        let path = gradient_clip("dmg", 108);
+        let t = mp4::read_track(&path).unwrap();
+        damage(&path, &[&t.samples[50]]);
+        let w = CamWorker::spawn("dmg", Context::default());
+        w.open(vec![Some(path.clone())]);
+        assert_eq!(once(&w, 0, at(49.0), Mode::Exact), Ok((0, 49)));
+        assert_eq!(once(&w, 0, at(50.0), Mode::Exact), damaged());
+        // The same hole: already told, and nothing is decoded again.
+        assert_eq!(settle(&w, 0, at(55.0), Mode::Exact), []);
+        assert_eq!(settle(&w, 0, at(71.0), Mode::Play), []);
+        assert_eq!(once(&w, 0, at(72.0), Mode::Exact), Ok((0, 72)), "the next keyframe heals it");
+        assert_eq!(once(&w, 0, at(60.0), Mode::Exact), damaged(), "back in the hole: told again");
+        assert_eq!(once(&w, 0, at(49.0), Mode::Exact), Ok((0, 49)));
+        drop(w);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_damaged_keyframe_settles_in_every_mode() {
+        let path = gradient_clip("dmgkey", 108);
+        let t = mp4::read_track(&path).unwrap();
+        damage(&path, &[&t.samples[36]]);
+        let w = CamWorker::spawn("dmgkey", Context::default());
+        w.open(vec![Some(path.clone())]);
+        assert_eq!(once(&w, 0, at(30.0), Mode::Exact), Ok((0, 30)));
+        assert_eq!(once(&w, 0, at(40.0), Mode::Keyframes), damaged());
+        assert_eq!(settle(&w, 0, at(40.0), Mode::Exact), [], "the tile already says so");
+        assert_eq!(settle(&w, 0, at(36.0), Mode::Exact), []);
+        assert_eq!(once(&w, 0, at(72.0), Mode::Exact), Ok((0, 72)));
+        drop(w);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn an_undecodable_clip_reports_once_and_playing_through_it_is_quiet() {
+        let path = gradient_clip("garbage", 80);
+        let t = mp4::read_track(&path).unwrap();
+        damage(&path, &t.samples.iter().collect::<Vec<_>>());
+        let w = CamWorker::spawn("garbage", Context::default());
+        w.open(vec![Some(path.clone())]);
+        assert_eq!(once(&w, 0, at(10.0), Mode::Exact), damaged());
+        assert_eq!(settle(&w, 0, at(20.0), Mode::Play), []);
+        assert_eq!(settle(&w, 0, at(60.0), Mode::Play), []);
+        drop(w);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_read_failure_reports_once() {
+        let path = gradient_clip("short", 80);
+        let w = CamWorker::spawn("short", Context::default());
+        w.open(vec![Some(path.clone())]);
+        assert_eq!(once(&w, 0, 0.0, Mode::Exact), Ok((0, 0)));
+        // The file shrinks under the open clip, as with a pulled drive.
+        File::options().write(true).open(&path).unwrap().set_len(64).unwrap();
+        assert!(once(&w, 0, at(70.0), Mode::Exact).unwrap_err().starts_with("read:"));
+        assert_eq!(settle(&w, 0, at(75.0), Mode::Exact), []);
+        drop(w);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn take_never_returns_the_old_event_after_open() {
+        let path = gradient_clip("gen", 40);
+        let w = CamWorker::spawn("gen", Context::default());
+        w.open(vec![Some(path.clone())]);
+        w.seek(0, 0.0, Mode::Exact);
+        let t0 = Instant::now();
+        while w.slot.lock().unwrap().is_none() {
+            assert!(t0.elapsed() < Duration::from_secs(30));
+            thread::sleep(Duration::from_millis(1));
+        }
+        // The worker hasn't seen this open yet; its result for the old event is still in the slot.
+        w.open(vec![Some(path.clone())]);
+        assert!(w.take().is_none());
+        assert_eq!(wait(&w, 0, 0.0, Mode::Exact), Ok((0, 0)));
+        drop(w);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    /// Entering a segment must not read the next one's moov before its first picture.
+    #[test]
+    fn preloading_waits_until_the_target_is_out() {
+        let path = gradient_clip("pre", 12);
+        let mut w = Worker::new(Slot::default(), Context::default());
+        w.files = vec![Some(path.clone()), Some(path.clone())];
+        w.target = Some((0, at(5.0), Mode::Exact));
+        w.idle = false;
+        w.step();
+        assert!(w.cur.is_some() && w.next.is_none());
+        while !w.idle {
+            w.step();
+        }
+        assert_eq!(w.next.as_ref().map(|n| n.0), Some(1));
+        // The last segment has nothing to open.
+        w.target = Some((1, 0.0, Mode::Exact));
+        w.idle = false;
+        while !w.idle {
+            w.step();
+        }
+        assert!(w.next.is_none());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn worker_follows_targets() {
+        let path = gradient_clip("worker", 80);
         let track = mp4::read_track(&path).unwrap();
         let keys: Vec<usize> = (0..80).filter(|&i| track.samples[i].key).collect();
         assert_eq!(keys, [0, 36, 72]);
-        let at = |k: f64| k / FPS as f64;
 
         let worker = CamWorker::spawn("test", Context::default());
         worker.open(vec![Some(path.clone()), None, Some(path.clone())]);
