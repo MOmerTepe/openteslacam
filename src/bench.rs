@@ -1,11 +1,9 @@
 //! Phase 0 go/no-go: can openh264 decode 6 camera streams at 1x and 4x on this machine?
 
 use crate::decode::{CamDecoder, to_rgba};
+use crate::fixture::{FPS, encode_clip, rng};
+use crate::library::CAMERAS;
 use crate::mp4;
-use crate::mux::Muxer;
-use openh264::OpenH264API;
-use openh264::encoder::{BitRate, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, RateControlMode};
-use openh264::formats::YUVBuffer;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -122,7 +120,6 @@ fn print_machine() {
     println!("{cpus} hardware threads; one decoder thread per stream, all streams at once");
 }
 
-const FPS: u32 = 36;
 const SECONDS: u32 = 10;
 
 /// `--bench-synthetic`: encodes HW3/HW4-sized clips with openh264, then benchmarks them.
@@ -136,10 +133,9 @@ pub fn bench_synthetic() -> Result<(), String> {
     );
     print_machine();
     // (name, width, height, target bits/s)
-    const CAMS: [&str; 6] = ["front", "back", "left_repeater", "right_repeater", "left_pillar", "right_pillar"];
-    let hw4 = CAMS.map(|n| if n == "front" { (n, 2896, 1876, 12_000_000) } else { (n, 1448, 938, 5_000_000) });
+    let hw4 = CAMERAS.map(|n| if n == "front" { (n, 2896, 1876, 12_000_000) } else { (n, 1448, 938, 5_000_000) });
     let sets = [
-        ("HW3 (6 x 1280x960)", CAMS.map(|n| (n, 1280, 960, 5_000_000))),
+        ("HW3 (6 x 1280x960)", CAMERAS.map(|n| (n, 1280, 960, 5_000_000))),
         ("HW4 (front 2896x1876 + 5 x 1448x938)", hw4),
     ];
     for (set, cams) in sets {
@@ -168,14 +164,6 @@ pub fn bench_synthetic() -> Result<(), String> {
     Ok(())
 }
 
-/// xorshift64: deterministic noise without a rand dependency.
-fn rng(s: &mut u64) -> u64 {
-    *s ^= *s << 13;
-    *s ^= *s >> 7;
-    *s ^= *s << 17;
-    *s
-}
-
 /// A textured scene panning sideways (so motion search has real work) plus per-frame sensor noise
 /// (so it doesn't compress to nothing), encoded and muxed to `path`.
 fn synth_clip(path: &Path, w: usize, h: usize, bps: u32, seed: u64) -> Result<(), String> {
@@ -188,20 +176,8 @@ fn synth_clip(path: &Path, w: usize, h: usize, bps: u32, seed: u64) -> Result<()
     let bw = tw.div_ceil(8);
     let tex: Vec<u8> =
         (0..tw * h).map(|i| (blocks[(i / tw / 8) * bw + (i % tw) / 8] / 2).wrapping_add((((i % tw) ^ (i / tw)) & 63) as u8)).collect();
-
-    let cfg = EncoderConfig::new()
-        .bitrate(BitRate::from_bps(bps))
-        .max_frame_rate(FrameRate::from_hz(FPS as f32))
-        .rate_control_mode(RateControlMode::Bitrate)
-        .skip_frames(false)
-        .intra_frame_period(IntraFramePeriod::from_num_frames(FPS));
-    let enc_err = |e: openh264::Error| format!("encoder {w}x{h}: {e}");
-    let mut enc = Encoder::with_api_config(OpenH264API::from_source(), cfg).map_err(enc_err)?;
-    let (mut sps, mut pps) = (Vec::new(), Vec::new());
-    let mut samples = Vec::with_capacity(frames);
-    for t in 0..frames {
+    encode_clip(path, w, h, bps, frames, |t, yuv| {
         let off = t * PAN;
-        let mut yuv = Vec::with_capacity(w * h * 3 / 2);
         for y in 0..h {
             let row = &tex[y * tw + off..y * tw + off + w];
             yuv.extend(row.iter().map(|&p| p.wrapping_add((rng(&mut s) & 7) as u8)));
@@ -211,41 +187,6 @@ fn synth_clip(path: &Path, w: usize, h: usize, bps: u32, seed: u64) -> Result<()
                 yuv.extend((0..w / 2).map(|x| base.wrapping_add(tex[2 * y * tw + off + 2 * x] / 4)));
             }
         }
-        let bs = enc.encode(&YUVBuffer::from_vec(yuv, w, h)).map_err(enc_err)?;
-        let key = bs.frame_type() == FrameType::IDR;
-        let mut sample = Vec::new();
-        for layer in (0..bs.num_layers()).filter_map(|l| bs.layer(l)) {
-            for nal in (0..layer.nal_count()).filter_map(|n| layer.nal_unit(n)) {
-                // Annex-B start code (00 00 01 or 00 00 00 01) off; parameter sets go to avcC.
-                let nal = &nal[nal.iter().position(|&b| b != 0).unwrap_or(0) + 1..];
-                match nal.first().map(|b| b & 0x1F) {
-                    Some(7) => sps = nal.to_vec(),
-                    Some(8) => pps = nal.to_vec(),
-                    _ => {
-                        sample.extend((nal.len() as u32).to_be_bytes());
-                        sample.extend(nal);
-                    }
-                }
-            }
-        }
-        if sample.is_empty() {
-            return Err(format!("encoder {w}x{h} produced no picture for frame {t}"));
-        }
-        samples.push((sample, key));
-    }
-    if sps.len() < 4 || pps.is_empty() {
-        return Err(format!("encoder {w}x{h} produced no SPS/PPS"));
-    }
-    let mut avcc = vec![1, sps[1], sps[2], sps[3], 0xFF, 0xE1];
-    avcc.extend((sps.len() as u16).to_be_bytes());
-    avcc.extend(&sps);
-    avcc.push(1);
-    avcc.extend((pps.len() as u16).to_be_bytes());
-    avcc.extend(&pps);
-    let io = |e: std::io::Error| format!("{}: {e}", path.display());
-    let mut m = Muxer::create(path, FPS * 1000, w as u32, h as u32, &avcc).map_err(io)?;
-    for (data, key) in &samples {
-        m.push(data, 1000, 0, *key).map_err(io)?;
-    }
-    m.finish().map_err(io)
+        None
+    })
 }

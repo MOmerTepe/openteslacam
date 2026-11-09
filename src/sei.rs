@@ -187,6 +187,57 @@ pub fn strip_epb(data: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Inserts emulation-prevention bytes the way an H.264 encoder would (inverse of `strip_epb`).
+pub fn add_epb(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + data.len() / 64);
+    let mut zeros = 0;
+    for &b in data {
+        if zeros >= 2 && b <= 3 {
+            out.push(3);
+            zeros = 0;
+        }
+        out.push(b);
+        zeros = if b == 0 { zeros + 1 } else { 0 };
+    }
+    out
+}
+
+/// Proto3 encoding of `t` (zero fields omitted), for synthetic clips.
+pub fn encode_metadata(t: &Telemetry) -> Vec<u8> {
+    fn varint(out: &mut Vec<u8>, mut v: u64) {
+        while v >= 0x80 {
+            out.push(v as u8 | 0x80);
+            v >>= 7;
+        }
+        out.push(v as u8);
+    }
+    let mut out = Vec::new();
+    let ints = [(1, t.version as u64), (2, t.gear as i64 as u64), (3, t.frame_seq_no)];
+    let flags = [(7, t.blink_left as u64), (8, t.blink_right as u64), (9, t.brake as u64), (10, t.autopilot as i64 as u64)];
+    for (f, v) in ints.into_iter().chain(flags).filter(|&(_, v)| v != 0) {
+        varint(&mut out, f << 3);
+        varint(&mut out, v);
+    }
+    for (f, v) in [(4, t.speed_mps), (5, t.accel_pct), (6, t.steering_deg)].into_iter().filter(|&(_, v)| v != 0.0) {
+        varint(&mut out, f << 3 | 5);
+        out.extend(v.to_le_bytes());
+    }
+    let doubles = [(11, t.lat), (12, t.lon), (13, t.heading), (14, t.accel_x), (15, t.accel_y), (16, t.accel_z)];
+    for (f, v) in doubles.into_iter().filter(|&(_, v)| v != 0.0) {
+        varint(&mut out, f << 3 | 1);
+        out.extend(v.to_le_bytes());
+    }
+    out
+}
+
+/// A user_data_unregistered SEI NAL in Tesla's wrapper (see `proto_payload`) around `proto`.
+pub fn sei_nal(proto: &[u8]) -> Vec<u8> {
+    // shortcut: one payload-size byte, so the protobuf must stay under 251 bytes (16 fields need ~110).
+    assert!(proto.len() + 4 < 255, "SEI payload too long for a one-byte size");
+    let body = [&[5, proto.len() as u8 + 4, 0x42, 0x42, 0x42, 0x69][..], proto].concat();
+    [&[0x06][..], &add_epb(&body), &[0x80]].concat()
+}
+
 /// Tesla's wrapper: from byte 3, a run of 0x42 then 0x69; payload runs to the byte before the
 /// last (the RBSP trailing byte).
 fn proto_payload(nal: &[u8]) -> Option<Vec<u8>> {
@@ -569,21 +620,6 @@ mod tests {
         assert_eq!(sei_payloads(&cut, 4), [a, b]);
     }
 
-    /// Inserts emulation-prevention bytes the way an H.264 encoder would.
-    fn add_epb(data: &[u8]) -> Vec<u8> {
-        let mut out = Vec::new();
-        let mut zeros = 0;
-        for &b in data {
-            if zeros >= 2 && b <= 3 {
-                out.push(3);
-                zeros = 0;
-            }
-            out.push(b);
-            zeros = if b == 0 { zeros + 1 } else { 0 };
-        }
-        out
-    }
-
     #[test]
     fn read_telemetry_from_mp4() {
         let path = std::env::temp_dir().join(format!("otc-sei-{}.mp4", std::process::id()));
@@ -615,6 +651,33 @@ mod tests {
         // Same rows sei_extractor.py printed for this file.
         assert_eq!(csv_row(&frames[0].t), ",GEAR_DRIVE,1,,,,,,,,,,2.0,,,");
         assert_eq!(csv_row(&frames[1].t), ",,3,10.5,,,,,,,-0.0,,,,,");
+    }
+
+    #[test]
+    fn encode_round_trip() {
+        let t = Telemetry {
+            version: 1,
+            gear: GEAR_REVERSE,
+            frame_seq_no: 1 << 40,
+            speed_mps: 13.25,
+            steering_deg: -90.5,
+            blink_right: true,
+            brake: true,
+            autopilot: AP_TACC,
+            lat: 52.5163,
+            lon: -13.0,
+            heading: 0.0,
+            accel_x: -7.5,
+            accel_z: 1e-300,
+            ..Default::default()
+        };
+        let p = encode_metadata(&t);
+        assert_eq!(decode_metadata(&p), Some(t));
+        // Wrapped and found again in a sample; -13.0 is mostly zero bytes, so EPB is exercised.
+        let nal = super::sei_nal(&p);
+        assert!(nal.windows(3).any(|w| w == [0, 0, 3]));
+        assert_eq!(sei_payloads(&avcc(&[nal], 4), 4), [p]);
+        assert!(encode_metadata(&Telemetry::default()).is_empty());
     }
 
     #[test]
