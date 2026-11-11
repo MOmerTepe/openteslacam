@@ -20,6 +20,24 @@ decrypt or play those clips.** They aren't real MP4 files, and only the car that
 To use your footage here, turn encryption off in the car: **Controls → Safety → Encrypt Dashcam Recordings**.
 Clips recorded after that are normal MP4s. Clips already encrypted stay unreadable.
 
+## What's new in 2.2
+
+- **Update from inside the app:** when a newer version is out, a dialog shows what's in it, with `update now`
+  and `later`. `update now` downloads the setup, checks it against the hash GitHub publishes, installs it and
+  restarts the app. After `later`, the `update to …` button stays in the top bar.
+- **Marks:** press `M` (or `mark` on the transport bar) to pin where it actually happened in a Saved event: the
+  moment on screen, or the In–Out range. The mark shows on the timeline and in the library, and the event
+  opens just before it next time.
+- **Import to this PC:** `import` in the library panel copies a TeslaCam drive into a folder you choose, in
+  Tesla's own layout. Every copy is read back and compared before it counts. Clearing the drive afterwards and
+  importing by itself when a drive is plugged in are both optional and off by default. The app still plays
+  straight off a drive.
+- **Manage what you imported:** for events in the library, `manage` in the top bar trims an event to the
+  minutes around its mark, drops cameras, moves it to an `Archive` folder or deletes it. Removed files go to
+  the Recycle Bin, and nothing is re-encoded.
+- **A welcome on first launch:** two skippable pages, one for the library folder and one for the controls.
+  The second is always behind the `?` button.
+
 ## What's new in 2.1
 
 - **Steering and g-force read the right way:** checked against real drives, the steering lane had left and right
@@ -85,13 +103,14 @@ macOS and Linux aren't packaged. The code isn't Windows-specific, but those buil
 
 ## Install
 
-Run `OpenTeslaCam-Setup-2.1.0.exe`. It installs for your user only and doesn't need administrator rights.
+Run `OpenTeslaCam-Setup-2.2.0.exe`. It installs for your user only and doesn't need administrator rights.
 Windows SmartScreen may warn you because the installer isn't code-signed yet.
 
-**Updating:** when a newer version is out, the app shows `update to …` in the top bar, which opens its
-download page. Close OpenTeslaCam and run the new setup: it finds the installed app, fills in its folder and
-says `update`. Settings, saved layouts and shortcuts stay. Version 2.0.0 has no such notice, so update it from
-the [releases page](https://github.com/MOmerTepe/openteslacam/releases/latest).
+**Updating:** from 2.2 on, the app offers a newer version when it starts and installs it itself. Versions 2.0.1
+and 2.1.0 show `update to …` in the top bar, which opens the download page: close OpenTeslaCam and run the new
+setup, which finds the installed app, fills in its folder and says `update`. Settings, saved layouts and
+shortcuts stay. Version 2.0.0 has no such notice, so update it from the
+[releases page](https://github.com/MOmerTepe/openteslacam/releases/latest).
 
 Setup checks your system first and offers anything missing before it installs:
 
@@ -110,7 +129,7 @@ powershell -ExecutionPolicy Bypass -File installer/detect-deps.ps1
 To uninstall, use Windows' installed apps. It removes only what setup installed, and leaves your clips,
 settings, saved layouts and Git.
 
-Unattended install: `OpenTeslaCam-Setup-2.1.0.exe --silent --dir <folder> [--desktop] [--tesla]`. Without
+Unattended install: `OpenTeslaCam-Setup-2.2.0.exe --silent --dir <folder> [--desktop] [--tesla]`. Without
 `--dir`, it updates the installed app where it is. Unattended uninstall: `uninstall.exe --uninstall --silent`.
 
 ## Usage
@@ -168,7 +187,8 @@ Double-click a camera to focus it. The library panel closes to give the cameras 
 
 Everything runs locally, and your footage and vehicle data are never uploaded. Map tiles come from OpenStreetMap
 and Esri and are cached on your machine. At startup the app also asks GitHub for the latest release, sending
-nothing but its version. That's the app's only network traffic. Setup goes online only if you
+nothing but its version, and downloads that release's setup from GitHub if you choose `update now`. That's the
+app's only network traffic. Marks and the library folder's location are kept in the app's settings on this PC. Setup goes online only if you
 choose to fetch Tesla's tools or install Git.
 
 ## Build from source

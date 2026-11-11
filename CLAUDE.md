@@ -54,6 +54,18 @@ or before In, starting a new file at a gap or a changed avcC/timescale/size. Com
 paints cameras plus the vehicle band, and encodes on the GPU (`MfEncoder`) or openh264. Output is written as
 `.part` and renamed on success.
 
+**Library on this PC** (`import.rs`, `manage.rs`, dialogs in `ui/`). Import copies a drive's SavedClips,
+SentryClips and RecentClips into `settings.library_dir` in Tesla's layout, so `library::scan` reads it unchanged;
+a file counts only after its copy was read back and its SHA-256 matched, and only then may the drive's copy be
+deleted. Manage acts on library events only (never on a drive): trim drops whole segments (cutting inside one
+would start each camera at its own keyframe), removed files go to the Recycle Bin. Marks live in settings as
+wall-clock seconds keyed by event folder name, so they survive import and trimming.
+
+**Update** (`update.rs`, dialog in `ui/update.rs`). One GitHub request at startup. An installed copy (one with
+`uninstall.exe` beside it) downloads the release's setup, checks size and SHA-256, renames its own running exe
+aside, runs `setup --silent --dir <its folder>` and starts the new exe. Things that must not run in tests
+(update check, drive watch, welcome) start in `ui::run`, not `App::new`.
+
 **UI** (`src/ui/`). `mod.rs` holds app state and the per-frame panel order; the other files are one region each.
 Layouts are cell lists on a 12 × 8 grid (presets use fractional units, only custom cells snap). `settings.rs`
 persists one JSON string through eframe storage where every field falls back on its own, so an older settings file
