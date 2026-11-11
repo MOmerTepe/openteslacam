@@ -20,6 +20,14 @@ pub const LINE2: Color32 = Color32::from_rgb(0x4a, 0x4a, 0x45);
 pub const VIDEO_BG: Color32 = Color32::from_rgb(0x0c, 0x0c, 0x0b);
 pub const HOVER: Color32 = Color32::from_rgb(0x1b, 0x1b, 0x19);
 pub const SELECTED: Color32 = Color32::from_rgb(0x20, 0x20, 0x1e);
+// The only colors, from the macOS window buttons (plex gray's status tokens). Always a fill, never
+// text or a hairline, and only where the color says something: red removes or brakes, yellow blinks,
+// green is a step forward. Lettering on them is the matching `_INK`.
+pub const RED: Color32 = Color32::from_rgb(0xed, 0x6a, 0x5e);
+pub const RED_INK: Color32 = Color32::from_rgb(0x69, 0x11, 0x0a);
+pub const YELLOW: Color32 = Color32::from_rgb(0xf4, 0xbf, 0x4f);
+pub const GREEN: Color32 = Color32::from_rgb(0x61, 0xc5, 0x54);
+pub const GREEN_INK: Color32 = Color32::from_rgb(0x29, 0x60, 0x17);
 
 pub fn mono(size: f32) -> FontId {
     FontId::monospace(size)
@@ -161,6 +169,10 @@ pub enum Look {
     Normal,
     /// Filled: the one primary action of a row. Same size as the others (design rule 3).
     Primary,
+    /// Primary, for the button that removes something: red.
+    Danger,
+    /// Primary, for a step forward that is waiting (an update): green.
+    Good,
     /// No border: panel chrome like the collapse button.
     Bare,
     /// Something that can be added back.
@@ -182,6 +194,8 @@ pub fn button(ui: &mut Ui, rect: Rect, face: Face, look: Look, enabled: bool, na
     let (fill, border, fg) = match look {
         _ if !enabled => (Color32::TRANSPARENT, Some(LINE), LINE2),
         Look::Primary => (if hot { TEXT2 } else { TEXT }, None, BG),
+        Look::Danger => (if hot { RED.gamma_multiply(0.85) } else { RED }, None, RED_INK),
+        Look::Good => (if hot { GREEN.gamma_multiply(0.85) } else { GREEN }, None, GREEN_INK),
         Look::Bare => (if down { LINE } else { Color32::TRANSPARENT }, None, if hot { TEXT } else { TEXT3 }),
         Look::Dashed => (if hot { HOVER } else { Color32::TRANSPARENT }, None, TEXT),
         Look::Normal => (
@@ -207,7 +221,7 @@ pub fn button(ui: &mut Ui, rect: Rect, face: Face, look: Look, enabled: bool, na
     match face {
         Face::Icon(i, size) => paint_icon(p, rect.center(), i, size, fg),
         Face::Text(t) => {
-            let font = if look == Look::Primary { medium(11.5) } else { mono(11.5) };
+            let font = if matches!(look, Look::Primary | Look::Danger | Look::Good) { medium(11.5) } else { mono(11.5) };
             p.text(rect.center(), Align2::CENTER_CENTER, t, font, fg);
         }
     }

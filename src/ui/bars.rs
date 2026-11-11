@@ -52,7 +52,7 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
         if let Some(r) = crate::update::available() {
             let text = format!("update to {}", r.version);
             let w = theme::text_width(ui, &text, theme::mono(11.5)).ceil() + 24.0;
-            if theme::button(ui, row.right(w, 20.0), Face::Text(&text), Look::Primary, true, "Show what's new and update").clicked() {
+            if theme::button(ui, row.right(w, 20.0), Face::Text(&text), Look::Good, true, "Show what's new and update").clicked() {
                 app.update_open = true;
             }
         }

@@ -1,6 +1,6 @@
 //! Vehicle strip at the top of the bottom panel: the telemetry at the playhead, per design rule 4.
 
-use super::theme::{self, BG, LINE, LINE2, OFF, TEXT, TEXT3};
+use super::theme::{self, BG, LINE, LINE2, OFF, RED, RED_INK, TEXT, TEXT3, YELLOW};
 use crate::sei::{self, AP_NONE, Telemetry};
 use crate::telemetry::{HARD_G, Record, speed_in};
 use eframe::egui::emath::Rot2;
@@ -60,21 +60,22 @@ fn ap_text(state: i32) -> &'static str {
     if state == AP_NONE { "manual" } else { sei::ap_name(state) }
 }
 
-/// Filled when `on`, else a thin dim box. Both 18 px tall.
-fn chip(p: &Painter, left_center: Pos2, text: &str, on: bool) {
-    let (font, fg) = if on { (theme::medium(12.0), BG) } else { (theme::mono(12.0), TEXT3) };
+/// Filled with `fill` (lettered in `ink`) when `on`, else a thin dim box. Both 18 px tall.
+fn chip(p: &Painter, left_center: Pos2, text: &str, on: bool, (fill, ink): (Color32, Color32)) {
+    let (font, fg) = if on { (theme::medium(12.0), ink) } else { (theme::mono(12.0), TEXT3) };
     let g = p.layout_no_wrap(text.to_owned(), font, fg);
     let r = Rect::from_min_size(pos2(left_center.x, left_center.y - 9.0), vec2(g.size().x + 12.0, 18.0));
     if on {
-        p.rect_filled(r, 0.0, TEXT);
+        p.rect_filled(r, 0.0, fill);
     } else {
         p.rect_stroke(r, 0.0, theme::line(LINE2), StrokeKind::Inside);
     }
     p.galley(pos2(r.min.x + 6.0, left_center.y - g.size().y / 2.0), g, fg);
 }
 
+/// Blinkers and hazards: amber when lit, as on the car.
 fn lit(on: bool) -> Color32 {
-    if on { TEXT } else { LINE2 }
+    if on { YELLOW } else { LINE2 }
 }
 
 /// The mockup's 24-unit polygons at `scale` px per unit, drawn around (12, 12).
@@ -162,7 +163,7 @@ pub fn strip(ui: &Ui, rect: Rect, now: Option<&Record>, loading: bool, metric: b
         match i {
             0 => speed(&p, *cell, t, metric),
             1 => gears(&p, at, t.gear),
-            2 => chip(&p, at, if t.brake { "on" } else { "off" }, t.brake),
+            2 => chip(&p, at, if t.brake { "on" } else { "off" }, t.brake, (RED, RED_INK)),
             3 => accelerator(&p, at, t.accel_pct),
             4 => {
                 wheel(&p, pos2(at.x + 8.0, at.y), t.steering_deg);
@@ -170,8 +171,8 @@ pub fn strip(ui: &Ui, rect: Rect, now: Option<&Record>, loading: bool, metric: b
             }
             5 => blinkers(&p, at, t.blink_left, t.blink_right),
             6 => hazards(&p, at, t.blink_left && t.blink_right),
-            7 => chip(&p, at, ap_text(t.autopilot), t.autopilot != AP_NONE),
-            _ if r.g.abs() >= HARD_G => chip(&p, at, &g_text(r.g), true),
+            7 => chip(&p, at, ap_text(t.autopilot), t.autopilot != AP_NONE, (TEXT, BG)),
+            _ if r.g.abs() >= HARD_G => chip(&p, at, &g_text(r.g), true, (TEXT, BG)),
             _ => {
                 theme::label(&p, at, &g_text(r.g), theme::mono(12.0), TEXT, cell.width() - 20.0);
             }

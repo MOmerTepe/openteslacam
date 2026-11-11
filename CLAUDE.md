@@ -82,12 +82,14 @@ windows subsystem; CLI flags attach to the parent console (`attach_console`), so
 ## Design rules (UI changes must hold these)
 
 1. Nothing is drawn over the video. Captions sit in a strip above each tile; only modal dialogs may cover video.
-2. Monochrome, hard edges: no accent color, zero rounding, IBM Plex Mono for labels/controls/numbers, Plex Sans for
-   prose. Colors and fonts come from `ui/theme.rs`.
+2. Monochrome, hard edges: zero rounding, IBM Plex Mono for labels/controls/numbers, Plex Sans for prose. Colors
+   and fonts come from `ui/theme.rs`. The only colors are its `RED`, `YELLOW` and `GREEN` (the macOS window
+   buttons), used sparingly, always as a fill and only where the color itself says something: red removes
+   footage or brakes, yellow blinks, green is a step forward (an update). Never for decoration or plain text.
 3. All controls in a row are the same size. The primary action is filled, never larger; an active toggle is
    underlined. Widgets are painted into exact rects handed out by `theme::Row`, not egui's stock widgets.
 4. Each signal is drawn in the form that fits its data (area for speed, blocks for brake, line for steering,
-   labeled bands for Autopilot). Lit vs. unlit is brightness, not color.
+   labeled bands for Autopilot). Lit vs. unlit is brightness; color only where rule 2 allows it (brake, blinkers).
 
 Sign conventions (measured on one HW4 car, Nov 2026): `steering_deg` > 0 is right; `accel_y` is longitudinal and
 negative when speeding up, so forward g is `-accel_y` and braking is negative g; `accel_x` is lateral (unused).

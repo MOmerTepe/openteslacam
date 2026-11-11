@@ -190,7 +190,7 @@ fn build_lanes(p: &Painter, store: &Store, dur: f64, bar: Rect, [speed, pedals, 
             gas_fill.add_colored_rect(Rect::from_x_y_ranges(x0..=x1, y..=ped_c), Color32::from_rgba_unmultiplied(230, 230, 225, 56));
             gas.push(pos2(mid, y));
             if col.brake {
-                brake_fill.add_colored_rect(Rect::from_x_y_ranges(x0..=x1, ped_c..=pedals.max.y), TEXT);
+                brake_fill.add_colored_rect(Rect::from_x_y_ranges(x0..=x1, ped_c..=pedals.max.y), theme::RED);
             }
             // Both extremes of the column, nearest the previous point first, so peaks stay and
             // falling edges don't saw.

@@ -147,7 +147,7 @@ fn sure(ui: &mut Ui, ev: &Event) -> Step {
     ui.painter().galley(r.min, g, TEXT2);
     ui.add_space(18.0);
     let mut r = footer(ui);
-    if theme::button(ui, r.right(BTN_W, 8.0), Face::Text("delete"), Look::Primary, true, "delete").clicked() {
+    if theme::button(ui, r.right(BTN_W, 8.0), Face::Text("delete"), Look::Danger, true, "delete").clicked() {
         step = Step::Confirm;
     }
     if theme::text_button(ui, r.right(BTN_W, 8.0), "cancel", true).clicked() {
