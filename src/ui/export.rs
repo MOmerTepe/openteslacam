@@ -22,8 +22,8 @@ pub const BAND_H: f32 = 80.0;
 pub const CAPTION_H: f32 = 18.0;
 const MAP_W: f32 = 256.0;
 /// Dialog width inside its 22 px padding (the mockup's 580).
-const W: f32 = 536.0;
-const BTN_H: f32 = 32.0;
+pub(super) const W: f32 = 536.0;
+pub(super) const BTN_H: f32 = 32.0;
 /// Fits `cancel` and `export`; design rule 3 makes them equal.
 const BTN_W: f32 = 72.0;
 
@@ -234,7 +234,7 @@ fn pick(app: &mut App) {
     }
 }
 
-fn row(ui: &mut Ui, h: f32) -> Rect {
+pub(super) fn row(ui: &mut Ui, h: f32) -> Rect {
     ui.allocate_exact_size(vec2(W, h), Sense::hover()).0
 }
 
@@ -244,7 +244,7 @@ fn legend(ui: &mut Ui, text: &str) {
 }
 
 /// The whole `rect` clicks: a 14 px box and its label, as the mockup's checkboxes.
-fn check(ui: &mut Ui, rect: Rect, text: &str, on: &mut bool) {
+pub(super) fn check(ui: &mut Ui, rect: Rect, text: &str, on: &mut bool) {
     let r = ui.allocate_rect(rect, Sense::click());
     r.widget_info(|| WidgetInfo::selected(Role::CheckBox, true, *on, text));
     if r.clicked() {
@@ -412,14 +412,14 @@ fn contents(ui: &mut Ui, app: &mut App) -> Step {
 }
 
 /// The rule, 14 px, then the button row.
-fn footer(ui: &mut Ui) -> Row {
+pub(super) fn footer(ui: &mut Ui) -> Row {
     let r = row(ui, 1.0);
     ui.painter().hline(r.x_range(), r.min.y + 0.5, theme::line(LINE));
     ui.add_space(14.0);
     Row::new(row(ui, BTN_H))
 }
 
-fn progress(ui: &mut Ui, f: f32) {
+pub(super) fn progress(ui: &mut Ui, f: f32) {
     let f = f.clamp(0.0, 1.0);
     let mut r = Row::new(row(ui, 16.0));
     let text = r.right(48.0, 12.0);

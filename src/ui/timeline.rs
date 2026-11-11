@@ -43,6 +43,8 @@ pub struct View<'a> {
     pub metric: bool,
     /// In and Out, in seconds from the event start.
     pub trim: Option<(f64, f64)>,
+    /// Where the user says it happened, in seconds from the event start; a point has both ends equal.
+    pub mark: Option<(f64, f64)>,
 }
 
 /// The lanes as shapes, built once per event and lane size.
@@ -314,6 +316,20 @@ pub fn show(ui: &Ui, rect: Rect, player: Option<&mut Player>, lanes_open: &mut b
         p.vline(x0 + 0.5, range.y_range(), theme::line(TEXT3));
         p.vline(x1 - 0.5, range.y_range(), theme::line(TEXT3));
     }
+    // The mark: a bright cap over its span with solid ends, and its word beside it.
+    if let Some((a, b)) = view.mark.filter(|m| m.0 <= dur && m.1 >= 0.0) {
+        let (x0, x1) = (x(a), x(b).max(x(a) + 2.0));
+        p.rect_filled(Rect::from_x_y_ranges(x0..=x1, segs_top - 3.0..=segs_top - 1.0), 0.0, TEXT);
+        p.vline(x0 + 0.5, segs_top - 3.0..=rect.max.y, theme::line(TEXT));
+        p.vline(x1 - 0.5, segs_top - 3.0..=rect.max.y, theme::line(TEXT));
+        let g = p.layout_no_wrap("mark".to_owned(), theme::medium(10.0), TEXT);
+        let w = g.size().x + 10.0;
+        let left = if x1 + 4.0 + w > bar.max.x { x0 - 4.0 - w } else { x1 + 4.0 };
+        let r = Rect::from_min_size(pos2(left, rect.min.y), vec2(w, TICKS - 3.0));
+        p.rect_filled(r, 0.0, BG);
+        p.rect_stroke(r, 0.0, theme::line(TEXT), StrokeKind::Inside);
+        p.galley(pos2(r.min.x + 5.0, r.center().y - g.size().y / 2.0), g, TEXT);
+    }
     if lane_store.is_some()
         && let Some(cache) = view.cache
     {
@@ -405,7 +421,7 @@ mod tests {
         for events in [vec![Input::PointerMoved(pos)], vec![press(true)], vec![press(false)], vec![]] {
             let input = RawInput { screen_rect: Some(rect), events, ..Default::default() };
             ctx.run_ui(input, |ui| {
-                show(ui, rect, None, &mut open, View { store: None, cache: &mut None, flag: None, metric: true, trim: None });
+                show(ui, rect, None, &mut open, View { store: None, cache: &mut None, flag: None, metric: true, trim: None, mark: None });
             })
             .textures_delta
             .clear();

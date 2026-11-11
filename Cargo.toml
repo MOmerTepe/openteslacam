@@ -16,6 +16,8 @@ license = "MIT"
 bytemuck = { version = "1.25.2", features = ["extern_crate_alloc"] }
 eframe = { version = "0.37.0", features = ["persistence"] }
 openh264 = "0.9.9"
+# Already in the tree; named here to check a downloaded setup against its published hash.
+sha2 = "0.10.9"
 # Both already come with walkers (map tiles); named here for the update check, with no new features.
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 rfd = "0.17.2"

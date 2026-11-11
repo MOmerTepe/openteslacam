@@ -5,7 +5,9 @@ mod bench;
 mod decode;
 mod export;
 mod fixture;
+mod import;
 mod library;
+mod manage;
 #[cfg(windows)]
 mod mf;
 mod mp4;

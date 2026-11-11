@@ -4,11 +4,15 @@ mod bars;
 mod events;
 pub(crate) mod export;
 pub(crate) mod grid;
+mod import;
 mod keys;
+mod manage;
 mod map;
+mod onboard;
 mod settings;
 pub(crate) mod theme;
 mod timeline;
+mod update;
 mod vehicle;
 
 use crate::decode::{CamWorker, Mode};
@@ -40,7 +44,11 @@ pub fn run(folder: Option<PathBuf>) -> Result<(), String> {
         Box::new(move |cc| {
             let settings = cc.storage.and_then(|s| s.get_string(settings::KEY)).map_or_else(Settings::default, |s| Settings::from_json(&s));
             crate::update::check(cc.egui_ctx.clone());
-            Ok(Box::new(App::new(&cc.egui_ctx, settings, folder)))
+            let mut app = App::new(&cc.egui_ctx, settings, folder);
+            app.drives_rx = Some(import::watch(cc.egui_ctx.clone()));
+            // Here and not in `new`: once per install, on a real launch.
+            app.onboard.open = !app.settings.onboarded;
+            Ok(Box::new(app))
         }),
     )
     .map_err(|e| e.to_string())
@@ -74,8 +82,14 @@ pub struct App {
     focus: Option<usize>,
     editor: grid::Editor,
     shortcuts_open: bool,
+    update_open: bool,
     trim: Trim,
     export: export::Dialog,
+    import: import::Dialog,
+    manage: manage::Dialog,
+    onboard: onboard::Dialog,
+    /// Tesla drives as they're plugged in; None where nothing watches (tests).
+    drives_rx: Option<Receiver<PathBuf>>,
     /// Set while an event's segment table is being read; replacing it abandons that one. The event
     /// that's open now stays until the new one is ready.
     opening: Option<Opening>,
@@ -113,8 +127,13 @@ impl App {
             focus: None,
             editor: grid::Editor::default(),
             shortcuts_open: false,
+            update_open: false,
             trim: Trim::default(),
             export: export::Dialog::default(),
+            import: import::Dialog::default(),
+            manage: manage::Dialog::default(),
+            onboard: onboard::Dialog::default(),
+            drives_rx: None,
             opening: None,
         };
         if let Some(f) = folder {
@@ -144,6 +163,12 @@ impl App {
             let _ = tx.send(library::scan(&path));
             ctx.request_repaint();
         });
+    }
+
+    /// The open event's mark, as wall-clock seconds.
+    fn mark(&self) -> Option<(f64, f64)> {
+        let ev = &self.events[self.current?];
+        self.settings.marks.get(&ev.name).copied().filter(|_| events::markable(ev.kind))
     }
 
     fn close_event(&mut self) {
@@ -194,6 +219,14 @@ impl App {
         (self.telemetry, self.lane_cache) = (None, None);
         self.map.new_event();
         self.trim = Trim::default();
+        // A marked event opens just before its mark, with a marked range ready as In and Out.
+        if let Some((a, b)) = self.mark() {
+            let (a, b) = (a - player.start as f64, b - player.start as f64);
+            player.seek((a - events::MARK_LEAD).max(0.0));
+            if b > a {
+                self.trim = Trim { start: Some(a), end: Some(b) };
+            }
+        }
         self.export.dest = None;
         // Reads whole clips: seconds per segment on a USB stick.
         let mut jobs = telemetry::jobs(ev, &player.segs);
@@ -220,6 +253,9 @@ impl App {
         // The export dialog is modal for drops too: it shows the open event's range.
         if let Some(p) = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).find(|p| p.is_dir())).filter(|_| !self.export.open) {
             self.open_folder(ctx, p);
+        }
+        if let Some(drive) = self.drives_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            import::drive_arrived(self, drive);
         }
         if let Some(result) = self.scan_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.scan_rx = None;
@@ -286,7 +322,8 @@ impl App {
     }
 
     fn keyboard(&mut self, ctx: &Context) {
-        if ctx.text_edit_focused() {
+        // The update dialog takes Esc itself; nothing plays or seeks under it.
+        if ctx.text_edit_focused() || self.update_open || self.import.open || self.manage.open || self.onboard.open {
             return;
         }
         // Space on a tabbed-to button already clicks that button.
@@ -328,6 +365,15 @@ impl App {
             Action::TrimOut => {
                 if let Some(p) = &self.player {
                     self.trim.set_out(p.position);
+                }
+            }
+            Action::Mark => {
+                if let (Some(p), Some(i)) = (&self.player, self.current)
+                    && events::markable(self.events[i].kind)
+                {
+                    // The range if one is set, else the moment on screen.
+                    let (a, b) = if self.trim.is_set() { self.trim.range(p.duration()) } else { (p.position, p.position) };
+                    self.settings.toggle_mark(&self.events[i].name, (p.start as f64 + a, p.start as f64 + b));
                 }
             }
             a => {
@@ -404,6 +450,10 @@ impl App {
         });
         keys::shortcuts_modal(&ctx, &mut self.shortcuts_open);
         export::modal(self, &ctx);
+        update::modal(self, &ctx);
+        import::modal(self, &ctx);
+        manage::modal(self, &ctx);
+        onboard::modal(self, &ctx);
 
         if self.player.as_ref().is_some_and(|p| p.playing) {
             ctx.request_repaint();
@@ -795,6 +845,220 @@ mod tests {
         out.shapes.iter().any(|c| has(&c.shape, fill))
     }
 
+    /// M marks the moment or the In–Out range of a Saved event, it's kept by wall-clock time, shows in
+    /// the library, and the event opens just before it next time. Sentry events take no mark.
+    #[test]
+    fn marks_on_a_fixture() {
+        let dir = std::env::temp_dir().join(format!("otc-ui-mark-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        fixture::make_fixture(&dir, 2, 64, 48).unwrap();
+        let ctx = Context::default();
+        let mut app = App::new(&ctx, Settings { last_folder: Some(dir.clone()), ..Settings::default() }, None);
+        let t0 = Instant::now();
+        while app.scan_rx.is_some() {
+            assert!(t0.elapsed() < Duration::from_secs(30), "timed out waiting for the scan");
+            step(&ctx, &mut app, raw(1440.0, 960.0));
+            thread::sleep(Duration::from_millis(5));
+        }
+        let at = |app: &App, kind: Kind| app.events.iter().position(|e| e.kind == kind).unwrap();
+        let (saved, sentry) = (at(&app, Kind::Saved), at(&app, Kind::Sentry));
+        let name = app.events[saved].name.clone();
+        app.open_now(&ctx, saved);
+        app.player.as_mut().unwrap().pause();
+        let start = app.player.as_ref().unwrap().start as f64;
+        let seek = |app: &mut App, t: f64| app.player.as_mut().unwrap().seek(t);
+
+        // A point, shown on the transport and in the library row; the same key there clears it.
+        seek(&mut app, 3.5);
+        step(&ctx, &mut app, press(Key::M));
+        assert_eq!(app.settings.marks.get(&name), Some(&(start + 3.5, start + 3.5)));
+        let text = painted(&ctx, &mut app);
+        assert!(text.iter().any(|t| t.ends_with(&format!("· mark {}", events::hms((start + 3.5) as i64)))), "{text:?}");
+        assert!(text.iter().filter(|t| *t == "mark").count() == 2, "the button and the timeline: {text:?}");
+        step(&ctx, &mut app, press(Key::M));
+        assert!(app.settings.marks.is_empty());
+
+        // With In and Out set it's the range, and it comes back as In and Out when the event reopens.
+        seek(&mut app, 3.25);
+        step(&ctx, &mut app, press(Key::I));
+        seek(&mut app, 3.75);
+        step(&ctx, &mut app, press(Key::O));
+        step(&ctx, &mut app, press(Key::M));
+        assert_eq!(app.settings.marks.get(&name), Some(&(start + 3.25, start + 3.75)));
+        assert_eq!(Settings::from_json(&app.settings.to_json()).marks, app.settings.marks, "kept across a restart");
+        app.open_now(&ctx, sentry);
+        step(&ctx, &mut app, press(Key::M));
+        assert_eq!(app.settings.marks.len(), 1, "a Sentry event takes no mark");
+        app.open_now(&ctx, saved);
+        assert_eq!(app.player.as_ref().unwrap().position, 3.25 - events::MARK_LEAD);
+        assert_eq!(app.trim, Trim { start: Some(3.25), end: Some(3.75) });
+
+        drop(app);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The library panel's import, through the real worker: the fixture lands in the library folder in
+    /// Tesla's layout, the app moves over to it, and a plugged-in drive only speaks up once a library is chosen.
+    #[test]
+    fn import_on_a_fixture() {
+        let dir = std::env::temp_dir().join(format!("otc-ui-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (usb, lib) = (dir.join("usb"), dir.join("lib"));
+        fixture::make_fixture(&usb, 2, 64, 48).unwrap();
+        let ctx = Context::default();
+        let mut app = App::new(&ctx, Settings { last_folder: Some(usb.clone()), ..Settings::default() }, None);
+        let wait = |app: &mut App, what: &str, done: &dyn Fn(&App) -> bool| {
+            let t0 = Instant::now();
+            while !done(app) {
+                assert!(t0.elapsed() < Duration::from_secs(30), "timed out waiting for {what}");
+                step(&ctx, app, raw(1440.0, 960.0));
+                thread::sleep(Duration::from_millis(5));
+            }
+        };
+        wait(&mut app, "the scan", &|a| a.scan_rx.is_none() && a.opening.is_none());
+        let events = app.events.len();
+
+        // No library chosen: a drive turning up changes nothing.
+        import::drive_arrived(&mut app, usb.clone());
+        assert!(!app.import.open);
+
+        import::open_for(&mut app);
+        assert!(app.import.open && app.import.src.as_ref() == Some(&usb));
+        // A dialog's first frame only measures it.
+        step(&ctx, &mut app, raw(1440.0, 960.0));
+        let text = painted(&ctx, &mut app);
+        assert!(text.iter().any(|t| t == "choose where the library goes"), "{text:?}");
+        app.settings.library_dir = Some(lib.clone());
+        import::start(&mut app);
+        wait(&mut app, "the import", &|a| a.import.running.is_none());
+        let done = app.import.outcome.as_ref().unwrap().as_ref().unwrap();
+        assert!(done.copied > 0 && done.cleared == 0, "{done:?}");
+        step(&ctx, &mut app, raw(1440.0, 960.0));
+        assert!(painted(&ctx, &mut app).iter().any(|t| t == "import finished"));
+        assert_eq!(app.folder.as_ref(), Some(&lib), "the library is what's open now");
+        wait(&mut app, "the library scan", &|a| a.scan_rx.is_none());
+        // The fixture's encrypted event is plain files to the import; everything else reads the same.
+        assert_eq!(app.events.len(), events);
+        assert!(usb.join("SavedClips").is_dir(), "the drive is as it was");
+
+        // With a library, a drive opens the dialog; with auto-import it starts by itself.
+        app.import.open = false;
+        import::drive_arrived(&mut app, usb.clone());
+        assert!(app.import.open && app.import.running.is_none());
+        app.import.open = false;
+        app.settings.import_auto = true;
+        import::drive_arrived(&mut app, usb.clone());
+        assert!(app.import.running.is_some());
+        wait(&mut app, "the second import", &|a| a.import.running.is_none());
+        let again = app.import.outcome.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!((again.copied, again.already), (0, done_copied(&lib)));
+
+        drop(app);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Files under `dir`, two folder levels deep as a library is.
+    fn done_copied(dir: &Path) -> u64 {
+        let files = |d: &Path| std::fs::read_dir(d).unwrap().map(|e| e.unwrap().path()).collect::<Vec<_>>();
+        files(dir).iter().flat_map(|k| files(k)).map(|p| if p.is_dir() { files(&p).len() as u64 } else { 1 }).sum()
+    }
+
+    /// The welcome: the library page, the controls page (the same guide as the `?` sheet), and Esc
+    /// puts it away for good. A plain `App::new` never opens it by itself.
+    #[test]
+    fn welcome_shows_once() {
+        let ctx = Context::default();
+        let mut app = App::new(&ctx, Settings::default(), None);
+        assert!(!app.onboard.open && !app.settings.onboarded);
+        let shown = |app: &mut App| {
+            step(&ctx, app, raw(1440.0, 960.0));
+            painted(&ctx, app)
+        };
+        app.onboard.open = true;
+        let text = shown(&mut app);
+        for s in ["WELCOME · 1 OF 2", "keep in", "not chosen yet", "choose", "skip", "next", "no folder: footage plays from the drive"] {
+            assert!(text.iter().any(|t| t == s), "{s}: {text:?}");
+        }
+        app.settings.library_dir = Some(std::env::temp_dir());
+        assert!(shown(&mut app).iter().any(|t| t == "footage is copied here when you import"));
+        // No drive prompt, update notice or key reaches past it.
+        import::drive_arrived(&mut app, std::env::temp_dir());
+        assert!(!app.import.open);
+
+        app.onboard.page = 1;
+        let text = shown(&mut app);
+        for s in ["WELCOME · 2 OF 2", "timeline", "mark", "Space", "back", "done"] {
+            assert!(text.iter().any(|t| t == s), "{s}: {text:?}");
+        }
+        step(&ctx, &mut app, press(Key::Escape));
+        assert!(!app.onboard.open && app.settings.onboarded);
+        assert!(Settings::from_json(&app.settings.to_json()).onboarded, "and it stays away after a restart");
+
+        // The same guide is behind `?`.
+        app.shortcuts_open = true;
+        let text = shown(&mut app);
+        assert!(text.iter().any(|t| t == "CONTROLS") && text.iter().any(|t| t == "timeline") && text.iter().any(|t| t == "Space"), "{text:?}");
+    }
+
+    /// Managing is for the library only, and goes through the real worker while the event is open:
+    /// trim to the mark, then delete, with the list following.
+    #[test]
+    fn manage_on_a_fixture() {
+        let dir = std::env::temp_dir().join(format!("otc-ui-manage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        fixture::make_fixture(&dir, 2, 64, 48).unwrap();
+        let ctx = Context::default();
+        let mut app = App::new(&ctx, Settings { last_folder: Some(dir.clone()), ..Settings::default() }, None);
+        let wait = |app: &mut App, what: &str, done: &dyn Fn(&App) -> bool| {
+            let t0 = Instant::now();
+            while !done(app) {
+                assert!(t0.elapsed() < Duration::from_secs(30), "timed out waiting for {what}");
+                step(&ctx, app, raw(1440.0, 960.0));
+                thread::sleep(Duration::from_millis(5));
+            }
+        };
+        let settled = |a: &App| a.scan_rx.is_none() && a.opening.is_none() && a.manage.running.is_none();
+        wait(&mut app, "the scan", &settled);
+        let saved = |app: &App| app.events.iter().position(|e| e.kind == Kind::Saved && !e.encrypted);
+        app.open_now(&ctx, saved(&app).unwrap());
+        wait(&mut app, "frames, so the files are in use", &|a| a.tiles.iter().all(|t| t.tex.is_some()));
+
+        // A drive: no manage button. The same folder as the library: there it is.
+        assert!(!manage::allowed(&app));
+        assert!(!painted(&ctx, &mut app).iter().any(|t| t == "manage"));
+        app.settings.library_dir = Some(dir.clone());
+        assert!(manage::allowed(&app));
+        assert!(painted(&ctx, &mut app).iter().any(|t| t == "manage"));
+
+        // Nothing marked: trim has nothing to go by. Marked in the second segment: the first one goes.
+        app.manage.open = true;
+        step(&ctx, &mut app, raw(1440.0, 960.0));
+        assert!(painted(&ctx, &mut app).iter().any(|t| t.starts_with("Set a mark")));
+        let (events, name) = (app.events.len(), app.events[saved(&app).unwrap()].name.clone());
+        let start = app.player.as_ref().unwrap().start as f64;
+        // The fixture's segments are 2 s, well inside trim's lead-in, so nothing can be dropped.
+        app.settings.toggle_mark(&name, (start + 3.5, start + 3.5));
+        manage::pick(&mut app, "trim", &crate::manage::Action::Trim(3.5, 3.5));
+        step(&ctx, &mut app, raw(1440.0, 960.0));
+        assert!(painted(&ctx, &mut app).iter().any(|t| t == "trim: the range already covers every segment"));
+        manage::confirm(&mut app);
+        assert!(app.manage.running.is_none() && app.player.is_some(), "nothing to confirm");
+
+        manage::pick(&mut app, "delete", &crate::manage::Action::Delete);
+        step(&ctx, &mut app, raw(1440.0, 960.0));
+        let text = painted(&ctx, &mut app);
+        assert!(text.iter().any(|t| t.starts_with("delete: ") && t.ends_with("keeps 0 of 2 segments")), "{text:?}");
+        manage::confirm(&mut app);
+        assert!(app.player.is_none(), "the event is let go of first");
+        wait(&mut app, "the delete and the rescan", &settled);
+        assert_eq!(app.events.len(), events - 1);
+        assert!(!app.events.iter().any(|e| e.name == name) && !dir.join("SavedClips").join(&name).exists());
+        assert!(!app.manage.open, "done without a word");
+
+        drop(app);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// I and O through the keyboard, the transport's words, the dialog, and both export modes
     /// through the real worker thread.
     #[test]
@@ -824,7 +1088,7 @@ mod tests {
         // Nothing set: the dashes, the whole event, no range on the timeline.
         app.player.as_mut().unwrap().pause();
         let text = painted(&ctx, &mut app);
-        assert!(text.iter().filter(|t| *t == "--:--:--").count() == 2, "{text:?}");
+        assert!(text.iter().filter(|t| *t == "--:--:--").count() == 3, "in, out and mark: {text:?}");
         assert!(text.iter().any(|t| t == "export 4 s →"), "{text:?}");
         assert!(!paints_fill(&ctx, &mut app, timeline::TRIM_FILL));
 

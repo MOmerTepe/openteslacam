@@ -4,6 +4,7 @@
 use super::grid::{self, Profiles};
 use crate::library::CAMERAS;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub const KEY: &str = "settings";
@@ -50,6 +51,20 @@ pub struct Settings {
     /// Camera indexes back to front, last moved on top.
     // shortcut: one stacking order for all saved layouts, the saved format has no room for one per layout; split it if overlapping layouts fight.
     pub custom_z: [usize; 6],
+    /// The newest version the update dialog has opened for; it opens by itself once per version.
+    pub update_seen: String,
+    /// Where it happened, per event folder name: (from, to) as wall-clock `library::stamp` seconds, so
+    /// a mark survives the event's segments changing. A point has from == to. Saved as `{ name: [from, to] }`.
+    // shortcut: one mark per event, and the name is the only key (two cars saving in the same second would share one); keep a list or add the path if that's ever hit.
+    pub marks: BTreeMap<String, (f64, f64)>,
+    /// Where imported footage is kept on this PC; None until the user chooses to import.
+    pub library_dir: Option<PathBuf>,
+    /// Delete files from the drive once their copy is verified.
+    pub import_clear: bool,
+    /// Import without asking when a Tesla drive is plugged in.
+    pub import_auto: bool,
+    /// The welcome has been shown (or skipped); it never comes back by itself.
+    pub onboarded: bool,
 }
 
 impl Default for Settings {
@@ -66,11 +81,27 @@ impl Default for Settings {
             custom_layouts: grid::default_profiles(),
             custom_active: "my layout".to_owned(),
             custom_z: [0, 1, 2, 3, 4, 5],
+            update_seen: String::new(),
+            marks: BTreeMap::new(),
+            library_dir: None,
+            import_clear: false,
+            import_auto: false,
+            onboarded: false,
         }
     }
 }
 
 impl Settings {
+    /// Marks `name` at `mark`; the same mark again clears it, like In and Out.
+    pub fn toggle_mark(&mut self, name: &str, mark: (f64, f64)) {
+        let same = |m: &(f64, f64)| (m.0 - mark.0).abs() < 1e-3 && (m.1 - mark.1).abs() < 1e-3;
+        if self.marks.get(name).is_some_and(same) {
+            self.marks.remove(name);
+        } else {
+            self.marks.insert(name.to_owned(), mark);
+        }
+    }
+
     pub fn to_json(&self) -> String {
         json!({
             "units": if self.metric { "metric" } else { "imperial" },
@@ -85,6 +116,12 @@ impl Settings {
             "custom_layouts": grid::profiles_to_json(&self.custom_layouts),
             "custom_active": self.custom_active,
             "custom_z": self.custom_z.map(|c| CAMERAS[c]),
+            "update_seen": self.update_seen,
+            "library_dir": self.library_dir.as_ref().map(|p| p.to_string_lossy()),
+            "import_clear": self.import_clear,
+            "import_auto": self.import_auto,
+            "onboarded": self.onboarded,
+            "marks": self.marks.iter().map(|(k, &(a, b))| (k.clone(), json!([a, b]))).collect::<serde_json::Map<_, _>>(),
         })
         .to_string()
     }
@@ -103,6 +140,8 @@ impl Settings {
                 grid::raise(&mut custom_z, i);
             }
         }
+        let mark = |m: &Value| Some((m[0].as_f64()?, m[1].as_f64()?)).filter(|(a, b)| a.is_finite() && b >= a);
+        let marks = v["marks"].as_object().into_iter().flatten().filter_map(|(k, m)| Some((k.clone(), mark(m)?))).collect();
         Settings {
             metric: v["units"].as_str() != Some("imperial"),
             layout: Layout::ALL.into_iter().find(|l| v["layout"].as_str() == Some(l.name())).unwrap_or(d.layout),
@@ -115,6 +154,12 @@ impl Settings {
             custom_layouts,
             custom_active,
             custom_z,
+            update_seen: v["update_seen"].as_str().unwrap_or_default().to_owned(),
+            marks,
+            library_dir: v["library_dir"].as_str().map(PathBuf::from),
+            import_clear: v["import_clear"].as_bool().unwrap_or(d.import_clear),
+            import_auto: v["import_auto"].as_bool().unwrap_or(d.import_auto),
+            onboarded: v["onboarded"].as_bool().unwrap_or(d.onboarded),
         }
     }
 }
@@ -139,6 +184,12 @@ mod tests {
             custom_layouts,
             custom_active: "layout 2".to_owned(),
             custom_z: [5, 4, 3, 2, 1, 0],
+            update_seen: "2.2.0".to_owned(),
+            marks: BTreeMap::from([("2026-03-14_15-31-00".to_owned(), (1000.5, 1012.0)), ("point".to_owned(), (7.0, 7.0))]),
+            library_dir: Some(PathBuf::from(r"C:\Videos\TeslaCam")),
+            import_clear: true,
+            import_auto: true,
+            onboarded: true,
         };
         assert_eq!(Settings::from_json(&s.to_json()), s);
         assert_eq!(Settings::from_json(&Settings::default().to_json()), Settings::default());
@@ -157,6 +208,18 @@ mod tests {
         assert_eq!(s.custom_layouts, grid::default_profiles());
         assert_eq!(s.custom_active, "my layout");
         assert_eq!(s.custom_z, [0, 2, 3, 4, 5, 1]);
+    }
+
+    #[test]
+    fn marks_toggle_and_bad_ones_are_dropped() {
+        let mut s = Settings::default();
+        s.toggle_mark("a", (10.0, 12.0));
+        s.toggle_mark("a", (11.0, 11.0));
+        assert_eq!(s.marks["a"], (11.0, 11.0), "another place replaces it");
+        s.toggle_mark("a", (11.0, 11.0));
+        assert!(s.marks.is_empty(), "the same place again clears it");
+        let s = Settings::from_json(r#"{"marks":{"ok":[5,6.5],"backwards":[9,2],"short":[1],"text":"x","nan":[null,1]}}"#);
+        assert_eq!(s.marks, BTreeMap::from([("ok".to_owned(), (5.0, 6.5))]));
     }
 
     #[test]

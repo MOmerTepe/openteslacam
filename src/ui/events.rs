@@ -100,6 +100,15 @@ pub fn start_position(ev: &Event) -> f64 {
     }
 }
 
+/// Events the user can mark: the save button is pressed after the fact, so the moment is theirs to
+/// place. A Sentry trigger already is the moment, and RecentClips rolls away.
+pub fn markable(kind: Kind) -> bool {
+    matches!(kind, Kind::Saved | Kind::Folder)
+}
+
+/// Seconds of lead-in before a mark when its event opens.
+pub const MARK_LEAD: f64 = 3.0;
+
 /// "Dashcam button · Oakland", or what stands in for it.
 fn what(ev: &Event) -> String {
     let (reason, city) = ev.info.as_ref().map_or((String::new(), ""), |i| (reason_label(&i.reason), i.city.as_str()));
@@ -138,7 +147,8 @@ pub struct RowText {
     pub dur: String,
 }
 
-pub fn row_text(ev: &Event) -> RowText {
+/// `mark`: the wall-clock second the user marked, if any.
+pub fn row_text(ev: &Event, mark: Option<f64>) -> RowText {
     const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     let t = ev.time();
     let (_, m, d, ..) = civil(t);
@@ -152,6 +162,9 @@ pub fn row_text(ev: &Event) -> RowText {
     if gaps > 0 {
         meta += &format!(" · {}", plural(gaps, "gap"));
     }
+    if let Some(m) = mark {
+        meta += &format!(" · mark {}", hms(m as i64));
+    }
     RowText { time: hms(t), tag: kind_tag(ev.kind), line2: format!("{date} · {}", what(ev)), meta, dur }
 }
 
@@ -159,6 +172,7 @@ enum Clicked {
     Open(usize),
     Collapse,
     Change,
+    Import,
 }
 
 pub fn panel(app: &mut App, ui: &mut Ui) {
@@ -171,6 +185,7 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
         Some(Clicked::Open(i)) => app.open_event(ui.ctx(), i, matches!(app.events[i].kind, Kind::Saved | Kind::Sentry)),
         Some(Clicked::Collapse) => app.settings.library_open = false,
         Some(Clicked::Change) => app.pick_folder(ui.ctx()),
+        Some(Clicked::Import) => super::import::open_for(app),
         None => {}
     }
 }
@@ -189,10 +204,19 @@ fn contents(ui: &mut Ui, app: &mut App) -> Option<Clicked> {
 
     let path_row = Rect::from_min_size(pos2(inner.min.x, head.max.y + 14.0), vec2(inner.width(), 20.0));
     let path = app.folder.as_ref().map_or("no folder".to_owned(), |p| p.display().to_string());
-    theme::label(ui.painter(), path_row.left_center(), &path, theme::mono(11.5), TEXT2, inner.width() - 56.0);
+    // A running import says so here; otherwise the open folder can be imported, unless it is the library.
+    let importing = super::import::status(app);
+    let importable = app.folder.is_some() && app.folder != app.settings.library_dir;
+    let word = importing.as_deref().unwrap_or("import");
+    let word_w = if importing.is_some() || importable { theme::text_width(ui, word, theme::mono(11.5)).ceil() } else { 0.0 };
+    theme::label(ui.painter(), path_row.left_center(), &path, theme::mono(11.5), TEXT2, inner.width() - 68.0 - word_w);
     let change = path_row.with_min_x(path_row.max.x - 44.0);
     if link(ui, change, "change").clicked() {
         clicked = Some(Clicked::Change);
+    }
+    let import = path_row.with_max_x(change.min.x - 12.0).with_min_x(change.min.x - 12.0 - word_w);
+    if word_w > 0.0 && link(ui, import, word).clicked() {
+        clicked = Some(Clicked::Import);
     }
 
     let labels = Filter::ALL.map(|f| format!("{} {}", f.name(), app.events.iter().filter(|e| f.matches(e.kind)).count()));
@@ -226,11 +250,12 @@ fn contents(ui: &mut Ui, app: &mut App) -> Option<Clicked> {
     }
     // The clicked row lights up at once, even if its event takes a moment to open.
     let (events, thumbs, current) = (&app.events, &app.thumbs, app.opening.as_ref().map_or(app.current, |o| Some(o.event)));
+    let mark = |ev: &Event| app.settings.marks.get(&ev.name).filter(|_| markable(ev.kind)).map(|m| m.0);
     ui.scope_builder(UiBuilder::new().max_rect(list), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, ROW_H, rows.len(), |ui, range| {
             for &i in &rows[range] {
-                if row(ui, &events[i], current == Some(i), thumbs.get(&i)) {
+                if row(ui, &events[i], mark(&events[i]), current == Some(i), thumbs.get(&i)) {
                     clicked = Some(Clicked::Open(i));
                 }
             }
@@ -249,8 +274,8 @@ fn link(ui: &mut Ui, rect: Rect, text: &str) -> eframe::egui::Response {
 }
 
 /// True when clicked.
-fn row(ui: &mut Ui, ev: &Event, selected: bool, thumb: Option<&TextureHandle>) -> bool {
-    let t = row_text(ev);
+fn row(ui: &mut Ui, ev: &Event, mark: Option<f64>, selected: bool, thumb: Option<&TextureHandle>) -> bool {
+    let t = row_text(ev, mark);
     let sense = if ev.encrypted { Sense::hover() } else { Sense::click() };
     let (full, r) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), sense);
     r.widget_info(|| WidgetInfo::labeled(Role::Button, !ev.encrypted, format!("{} {}", t.time, t.line2)));
@@ -368,19 +393,21 @@ mod tests {
         let mut with_street = e.clone();
         with_street.info.as_mut().unwrap().street = "Broadway".to_owned();
         assert_eq!(subtitle(&with_street), "Dashcam button · Oakland · Broadway · 2 segments · 2 cameras");
-        let r = row_text(&e);
+        let r = row_text(&e, None);
         assert_eq!((r.time.as_str(), r.tag, r.line2.as_str()), ("18:51:07", "saved", "Nov 2 · Dashcam button · Oakland"));
         assert_eq!((r.meta.as_str(), r.dur.as_str()), ("02:00 · 2 seg", "02:00"));
+        assert_eq!(row_text(&e, stamp("2025-11-02_18-50-41").map(|s| s as f64 + 0.6)).meta, "02:00 · 2 seg · mark 18:50:41");
+        assert!(markable(Kind::Saved) && markable(Kind::Folder) && !markable(Kind::Sentry) && !markable(Kind::Recent));
 
         // RecentClips: no event.json, and the 9-minute hole counts as a gap.
         let e = event(Kind::Recent, &["2025-11-01_08-00-00", "2025-11-01_08-01-00", "2025-11-01_08-10-00"], None);
-        let r = row_text(&e);
+        let r = row_text(&e, None);
         assert_eq!((r.tag, r.line2.as_str(), r.meta.as_str()), ("recent", "Nov 1 · Rolling buffer", "11:00 · 3 seg · 1 gap"));
         assert_eq!(subtitle(&e), "Rolling buffer · 3 segments · 2 cameras");
 
         let mut e = event(Kind::Sentry, &["2025-10-30_19-47-55"], None);
         e.encrypted = true;
-        let r = row_text(&e);
+        let r = row_text(&e, None);
         assert_eq!((r.tag, r.meta.as_str()), ("locked", "see Controls → Safety"));
         assert!(r.line2.contains("Encrypted"));
     }
