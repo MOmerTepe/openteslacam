@@ -32,12 +32,25 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::thread;
 use std::time::Instant;
 
+const SIZE: [f32; 2] = [1440.0, 960.0];
+const MIN_SIZE: [f32; 2] = [1280.0, 720.0];
+/// Where eframe keeps the window's place and size in its storage.
+const WINDOW_KEY: &str = "window";
+
+/// Whether a window eframe saved is smaller than the app allows. eframe saves the size as it is at
+/// that moment, and a minimized window is 0 × 0; it then restores that as a 64 px window at the
+/// screen's corner. A text it can't read counts as fine: eframe then falls back to the default size.
+fn saved_too_small(window: &str) -> bool {
+    let num = |s: &str, key: &str| s.split(key).nth(1)?.split([',', ')']).next()?.trim().parse::<f32>().ok();
+    window.split("inner_size_points:").nth(1).is_some_and(|s| num(s, "x:").zip(num(s, "y:")).is_some_and(|(w, h)| w < MIN_SIZE[0] || h < MIN_SIZE[1]))
+}
+
 pub fn run(folder: Option<PathBuf>) -> Result<(), String> {
     // shortcut: rows don't wrap like the mockup's flex-wrap, the minimum width keeps them from colliding; wrap if people want smaller windows.
     // Without this eframe shows its own icon, which has a margin and so looks small on the taskbar.
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../../assets/icon.png")).map_err(|e| e.to_string())?;
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_app_id("openteslacam").with_inner_size([1440.0, 960.0]).with_min_inner_size([1280.0, 720.0]).with_icon(icon),
+        viewport: egui::ViewportBuilder::default().with_app_id("openteslacam").with_inner_size(SIZE).with_min_inner_size(MIN_SIZE).with_icon(icon),
         ..Default::default()
     };
     eframe::run_native(
@@ -90,6 +103,10 @@ pub struct App {
     import: import::Dialog,
     manage: manage::Dialog,
     onboard: onboard::Dialog,
+    /// The window was checked once against `MIN_SIZE`.
+    sized: bool,
+    /// The last window place eframe saved that wasn't a minimized one.
+    good_window: Option<String>,
     /// Tesla drives as they're plugged in; None where nothing watches (tests).
     drives_rx: Option<Receiver<PathBuf>>,
     /// Set while an event's segment table is being read; replacing it abandons that one. The event
@@ -135,6 +152,8 @@ impl App {
             import: import::Dialog::default(),
             manage: manage::Dialog::default(),
             onboard: onboard::Dialog::default(),
+            sized: false,
+            good_window: None,
             drives_rx: None,
             opening: None,
         };
@@ -465,11 +484,28 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _: &mut eframe::Frame) {
+        // A window restored smaller than the minimum (see `saved_too_small`; Windows applies the
+        // minimum only to resizing by hand) goes back to the default size, centered.
+        if !self.sized
+            && let Some((inner, monitor)) = ui.ctx().input(|i| i.viewport().inner_rect.zip(i.viewport().monitor_size))
+        {
+            self.sized = true;
+            if inner.width() < MIN_SIZE[0] || inner.height() < MIN_SIZE[1] {
+                let size = egui::Vec2::from(SIZE).min(monitor);
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::OuterPosition(((monitor - size) / 2.0).to_pos2()));
+            }
+        }
         self.frame(ui);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(settings::KEY, self.settings.to_json());
+        // eframe has just written the window. Saved while minimized, it is put back as it last was.
+        match storage.get_string(WINDOW_KEY) {
+            Some(w) if saved_too_small(&w) => storage.set_string(WINDOW_KEY, self.good_window.clone().unwrap_or_default()),
+            w => self.good_window = w,
+        }
     }
 }
 
@@ -496,6 +532,14 @@ mod tests {
     use eframe::egui::{DroppedFile, Event as InputEvent, Key, Modifiers, RawInput, Rect, pos2, vec2};
     use std::path::Path;
     use std::sync::Arc;
+
+    #[test]
+    fn a_window_saved_while_minimized_is_not_restored() {
+        let saved = |w: f32, h: f32| format!("(normal_geometry:(outer_position_pixels:Some((x:0.0,y:0.0)),scale_factor:1.0,inner_size_points:(x:{w:?},y:{h:?})),fullscreen:false,maximized:false)");
+        assert!(saved_too_small(&saved(64.0, 64.0)) && saved_too_small(&saved(0.0, 0.0)) && saved_too_small(&saved(1600.0, 300.0)));
+        assert!(!saved_too_small(&saved(1440.0, 960.0)) && !saved_too_small(&saved(1280.0, 720.0)));
+        assert!(!saved_too_small("") && !saved_too_small("(something else)"));
+    }
 
     #[test]
     fn only_hw4_at_4x_thins_out_the_other_cameras() {
