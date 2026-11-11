@@ -421,6 +421,22 @@ fn rotate_shapes(ctx: &Context, layer: LayerId, first: ShapeIdx, origin: Pos2, a
     });
 }
 
+/// Adds `b` to the last line so that egui can stroke it. A standing car's fixes jitter by centimetres:
+/// on screen the track repeats a point or doubles back, and the stroke's join there has no direction,
+/// which drew a long straight spike across the map (or nothing at all). Points closer than a pixel or
+/// so are left out, and a line that turns back on itself starts anew at the turn, where no join is made.
+fn extend(lines: &mut Vec<Vec<Pos2>>, b: Pos2) {
+    const MIN_PX: f32 = 1.5;
+    let Some(line) = lines.last_mut() else { return };
+    let a = line[line.len() - 1];
+    if a.distance(b) < MIN_PX {
+        return;
+    }
+    // Sharper than about 150°.
+    let back = line.len() >= 2 && (a - line[line.len() - 2]).normalized().dot((b - a).normalized()) < -0.87;
+    if back { lines.push(vec![a, b]) } else { line.push(b) }
+}
+
 /// Driven solid up to the playhead, still to come dashed, as in the mockup. Both have a dark casing,
 /// since the tiles under them may be light. Off-screen stretches are skipped: at street zoom a long
 /// track would otherwise be thousands of dashes per frame.
@@ -439,9 +455,10 @@ fn paint_track(p: &Painter, track: &[Run], screen: impl Fn(&Point) -> Pos2, now:
             let class = bounds.intersects(Rect::from_two_pos(a, b)).then_some(q.t <= now);
             if let Some(is_driven) = class {
                 let lines = if is_driven { &mut driven } else { &mut coming };
-                match lines.last_mut().filter(|_| last == class) {
-                    Some(line) => line.push(b),
-                    None => lines.push(vec![a, b]),
+                if lines.last().is_some() && last == class {
+                    extend(lines, b);
+                } else {
+                    lines.push(vec![a, b]);
                 }
             }
             prev = Some((b, class));
@@ -734,6 +751,37 @@ mod tests {
         tiles.decoded.request_repaint();
         tiles.decoded.request_repaint();
         assert_eq!(count.load(Ordering::Relaxed), 2);
+    }
+
+    /// A car standing in traffic: its fixes jitter by centimetres, so on screen the track repeats a
+    /// point and doubles back on itself. The stroke must stay at the track; it used to throw a long
+    /// straight spike across the map from such a point.
+    #[test]
+    fn a_standing_car_draws_no_spikes() {
+        let body = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 400.0));
+        // Arrives from the left, then stands at (200, 200): repeats, sub-pixel moves and exact reversals.
+        let mut xy: Vec<(f32, f32)> = (0..20).map(|i| (100.0 + i as f32 * 5.0, 200.0)).collect();
+        let jitter = [(0.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.3, 0.1), (-0.3, -0.1), (0.3, 0.1), (3.0, 0.0), (-3.0, 0.0), (3.0, 0.0), (0.0, 0.0), (0.0, 2.5), (0.0, -2.5), (1e-4, 0.0)];
+        for _ in 0..6 {
+            xy.extend(jitter.iter().map(|(dx, dy)| (200.0 + dx, 200.0 + dy)));
+        }
+        xy.extend((0..20).map(|i| (200.0, 200.0 - i as f32 * 5.0)));
+        let run: Run = xy.iter().enumerate().map(|(i, &(x, y))| Point { t: i as f64, lat: f64::from(y), lon: f64::from(x) }).collect();
+        let screen = |p: &Point| pos2(p.lon as f32, p.lat as f32);
+        let ctx = Context::default();
+        // Every split of driven and coming: the playhead moves through the standstill.
+        for now in (0..run.len()).step_by(3) {
+            let input = RawInput { screen_rect: Some(body), ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| paint_track(ui.painter(), std::slice::from_ref(&run), screen, now as f64, body));
+            out.textures_delta.clear();
+            for prim in ctx.tessellate(out.shapes, out.pixels_per_point) {
+                let eframe::egui::epaint::Primitive::Mesh(mesh) = prim.primitive else { continue };
+                for v in &mesh.vertices {
+                    let on_track = v.pos.x.is_finite() && v.pos.y.is_finite() && (90.0..=215.0).contains(&v.pos.x) && (95.0..=215.0).contains(&v.pos.y);
+                    assert!(on_track, "a stroke vertex at {:?} with the playhead at {now}", v.pos);
+                }
+            }
+        }
     }
 
     /// Clip rect and mesh of each tile.
