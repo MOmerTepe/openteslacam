@@ -16,6 +16,10 @@ use std::time::Duration;
 /// Fits `confirm`; design rule 3 gives the others the same width.
 const BTN_W: f32 = 104.0;
 const MENU_W: f32 = 120.0;
+/// Trimming to a mark keeps this much around it (seconds), like the lead-in when the event opens.
+/// In and Out are taken as they are.
+const MARK_BEFORE: f64 = 10.0;
+const MARK_AFTER: f64 = 5.0;
 
 /// What the dialog is about.
 #[derive(Clone, Copy, PartialEq)]
@@ -264,9 +268,16 @@ fn contents(ui: &mut Ui, app: &mut App) -> Step {
     let clock = |t: f64| super::events::hms((start + t) as i64);
     let (name, about, action) = match (app.manage.what, trim) {
         (What::Cameras, _) => ("drop cameras", "Removes the cameras that aren't ticked.".to_owned(), Some(Action::Cameras(app.manage.cams))),
-        (_, Some((a, b, true))) => ("trim", format!("Keeps In to Out, {} → {}, and removes the rest. Whole segments are kept, so a little more may stay.", clock(a), clock(b)), Some(Action::Trim(a, b))),
-        (_, Some((a, b, false))) if b > a => ("trim", format!("Keeps the mark, {} → {}, and removes the rest. Whole segments are kept, so a little more may stay.", clock(a), clock(b)), Some(Action::Trim(a, b))),
-        (_, Some((a, b, _))) => ("trim", format!("Keeps the segments around the mark at {} and removes the rest.", clock(a)), Some(Action::Trim(a, b))),
+        (_, Some((a, b, true))) => (
+            "trim",
+            format!("Keeps In to Out, {} → {}, and removes the rest. Nothing is re-encoded, so it starts on a frame all cameras can start from: up to a few seconds before In. It ends exactly at Out.", clock(a), clock(b)),
+            Some(Action::Trim(a, b)),
+        ),
+        (_, Some((a, b, false))) => (
+            "trim",
+            format!("Keeps the mark with {MARK_BEFORE:.0} s before and {MARK_AFTER:.0} s after, {} → {}, and removes the rest. Nothing is re-encoded, so it may start a few seconds earlier.", clock((a - MARK_BEFORE).max(0.0)), clock(b + MARK_AFTER)),
+            Some(Action::Trim((a - MARK_BEFORE).max(0.0), b + MARK_AFTER)),
+        ),
         (_, None) => ("trim", "Set In and Out, or a mark, to say which part to keep.".to_owned(), None),
     };
     // The text wraps and the row grows with it: it says what will be removed, so none of it may be cut off.
@@ -301,6 +312,7 @@ fn contents(ui: &mut Ui, app: &mut App) -> Step {
     let what = match &app.manage.pending {
         None => String::new(),
         Some((name, Err(e))) => format!("{name}: {e}"),
+        Some((name, Ok(p))) if !p.cut.is_empty() => format!("{name}: originals ({}) to the Recycle Bin · keeps {} of {segments} segments, {} clips cut", mb(manage::freed(p)), p.kept, p.cut.len()),
         Some((name, Ok(p))) => format!("{name}: {} to the Recycle Bin · keeps {} of {segments} segments", mb(manage::freed(p)), p.kept),
     };
     theme::label(ui.painter(), r.rest.left_center(), &what, theme::mono(11.0), TEXT3, r.rest.width());

@@ -57,8 +57,10 @@ paints cameras plus the vehicle band, and encodes on the GPU (`MfEncoder`) or op
 **Library on this PC** (`import.rs`, `manage.rs`, dialogs in `ui/`). Import copies a drive's SavedClips,
 SentryClips and RecentClips into `settings.library_dir` in Tesla's layout, so `library::scan` reads it unchanged;
 a file counts only after its copy was read back and its SHA-256 matched, and only then may the drive's copy be
-deleted. Manage acts on library events only (never on a drive): trim drops whole segments (cutting inside one
-would start each camera at its own keyframe), removed files go to the Recycle Bin. Marks live in settings as
+deleted. Manage acts on library events only (never on a drive): trim copies samples, never re-encodes: it ends on the frame at Out and
+starts at the last whole second before In where every camera has a keyframe (each camera at its own keyframe would
+put them out of step, and a clip's name holds its start in whole seconds); new clips are written and read back
+before an original goes, removed files go to the Recycle Bin. Marks live in settings as
 wall-clock seconds keyed by event folder name, so they survive import and trimming.
 
 **Update** (`update.rs`, dialog in `ui/update.rs`). One GitHub request at startup. An installed copy (one with

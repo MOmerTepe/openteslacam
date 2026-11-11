@@ -1052,11 +1052,11 @@ mod tests {
         assert_eq!(manage::range(&app), Some((0.5, 4.0, true)));
         step(&ctx, &mut app, raw(1440.0, 960.0));
         let text = painted(&ctx, &mut app);
-        assert!(text.iter().any(|t| t.starts_with("Keeps In to Out, 15:30:00 → 15:30:04") && t.ends_with("may stay.")), "{text:?}");
+        assert!(text.iter().any(|t| t.starts_with("Keeps In to Out, 15:30:00 → 15:30:04") && t.ends_with("exactly at Out.")), "{text:?}");
         app.trim = Trim::default();
         manage::pick(&mut app, "trim", &crate::manage::Action::Trim(3.5, 3.5));
         step(&ctx, &mut app, raw(1440.0, 960.0));
-        assert!(painted(&ctx, &mut app).iter().any(|t| t == "trim: the range already covers every segment"));
+        assert!(painted(&ctx, &mut app).iter().any(|t| t == "trim: the range already covers the whole event"));
         manage::confirm(&mut app);
         assert!(app.manage.running.is_none() && app.player.is_some(), "nothing to confirm");
 
