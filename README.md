@@ -20,6 +20,43 @@ decrypt or play those clips.** They aren't real MP4 files, and only the car that
 To use your footage here, turn encryption off in the car: **Controls → Safety → Encrypt Dashcam Recordings**.
 Clips recorded after that are normal MP4s. Clips already encrypted stay unreadable.
 
+## What's new in 2.3
+
+- **Crop the back camera:** the back camera sees its own trunk lid, plate cover and bumper around the picture. A
+  new button in the `BACK` caption, left of the focus button, switches to a view that cuts those away and
+  straightens the fisheye. The choice is remembered, and a composited export follows it. The lens numbers were
+  fitted by eye to one HW4 car, so another model may look slightly bent or still show a little bumper.
+- **Right-click an event to archive or delete it:** in the library list, a right-click on an event of your
+  library opens a small menu with `archive` and `delete`. Archive happens at once. Delete asks first and sends
+  the event to the Recycle Bin. The event doesn't have to be open, and encrypted events can be removed this way.
+- **Trim and drop cameras sit with the playback controls:** the `manage` button in the top bar is gone. For an
+  event in your library, two buttons after `out` open the trim and the drop cameras confirmation. Each says
+  what goes before you press `confirm`.
+- **Trim keeps what you selected, not whole minutes:** trim used to keep every one-minute clip the selection
+  touched. It now ends exactly at Out and starts up to a few seconds before In. Nothing is re-encoded, so the
+  picture and the vehicle data stay as the car wrote them, and a clip can only start on a frame every camera
+  can start from. New clips are written and read back before the originals go to the Recycle Bin. Trimming to
+  a mark, with no In and Out, keeps 10 s before it and 5 s after. The few seconds were measured on one HW4
+  car's clips.
+- **A little color where it means something:** red for what removes footage (`delete`, `confirm`) and for the
+  brake, yellow for blinkers, your mark, `archive` and the `locked` badge, green for `update to …`. Everything
+  else stays gray.
+- **A calmer timeline:** blinkers are one yellow band on the edge of the steering lane, left on top and right
+  below, instead of an arrow for every flash. Hard braking and acceleration are small tags like `−0.52 g` in a
+  row of their own above the times, with a line down to the moment, so they no longer cover the speed curve.
+- **An icon of its own:** six camera tiles, drawn to the edge so it is as large on the taskbar as other apps'.
+
+Fixed:
+
+- **The installed app had no icon.** Shortcuts and the Start menu showed a blank icon, because the program
+  carried none. The app, setup and the uninstaller now carry it. Not tried on a real install yet; Windows may
+  show the old blank icon on an existing shortcut until you sign out and in.
+- **The window opened as a tiny box in the corner of the screen.** This happened after the app was closed, or
+  left for a while, minimized: the window's size was saved as nothing. A minimized window is no longer saved,
+  and a window that still comes up too small goes back to its normal size in the middle of the screen. The
+  cause was read from the saved settings, not reproduced on purpose.
+- **The brake box changed size between `on` and `off`.** Both are the same width now.
+
 ## What's new in 2.2.2
 
 - **The manage dialog's text was cut off.** The line saying what trim keeps ended in `…`, and the six camera

@@ -787,7 +787,7 @@ mod tests {
         assert!(has(&vehicle::g_text(rec.g)), "{text:?}");
         assert!(has("on"), "the brake is on: {text:?}");
         assert!(!has("no vehicle data"));
-        assert!(has(&format!("hard brake {}", vehicle::g_text(brake.g))), "{text:?}");
+        assert!(has(&vehicle::g_text(brake.g)), "{text:?}");
         assert!(has("dashcam button 15:30:02"), "the event marker: {text:?}");
         for band in ["tacc", "autosteer", "fsd"] {
             assert!(has(band), "{text:?}");

@@ -9,7 +9,7 @@ members = ["installer"]
 
 # One version for the app and its installer. scripts/build-installer.ps1 reads it too.
 [workspace.package]
-version = "2.2.2"
+version = "2.3.0"
 license = "MIT"
 
 [dependencies]

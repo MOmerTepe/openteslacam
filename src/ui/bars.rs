@@ -14,6 +14,8 @@ const TOP_H: f32 = 56.0;
 const TRANSPORT_H: f32 = 36.0;
 const ROW_GAP: f32 = 12.0;
 const BOTTOM_PAD: f32 = 16.0;
+/// Between the transport and the scrubber, whose first row (its tags) is the visible gap.
+const SCRUB_GAP: f32 = ROW_GAP - timeline::TAGS;
 /// Fits `in --:--:--` at 11.5 px; design rule 3 gives Export the same width.
 const TRIM_BTN_W: f32 = 104.0;
 const RATE_LABELS: [&str; 5] = ["¼×", "½×", "1×", "2×", "4×"];
@@ -26,7 +28,7 @@ pub fn fmt_clock(wall: f64) -> String {
 
 /// The map cell is as tall as this panel, so its minimum sets the floor.
 pub fn bottom_height(lanes: bool) -> f32 {
-    let main = vehicle::HEIGHT + ROW_GAP + TRANSPORT_H + ROW_GAP + timeline::height(lanes) + BOTTOM_PAD;
+    let main = vehicle::HEIGHT + ROW_GAP + TRANSPORT_H + SCRUB_GAP + timeline::height(lanes) + BOTTOM_PAD;
     main.max(map::MIN_HEIGHT)
 }
 
@@ -104,7 +106,7 @@ pub fn bottom_panel(app: &mut App, ui: &mut Ui) {
         let x = rest.x_range();
         let transport_r = Rect::from_x_y_ranges(x.min + 16.0..=x.max - 16.0, rest.min.y + ROW_GAP..=rest.min.y + ROW_GAP + TRANSPORT_H);
         transport(app, ui, transport_r);
-        let top = transport_r.max.y + ROW_GAP;
+        let top = transport_r.max.y + SCRUB_GAP;
         let scrub_r = Rect::from_x_y_ranges(transport_r.x_range(), top..=top + timeline::height(app.settings.lanes_open));
         let flag = app.current.zip(app.player.as_ref()).and_then(|(i, p)| timeline::event_flag(&app.events[i], p.start));
         let trim = app.player.as_ref().filter(|_| app.trim.is_set()).map(|p| app.trim.range(p.duration()));

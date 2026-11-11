@@ -13,6 +13,9 @@ use std::collections::HashMap;
 const GUTTER: f32 = 84.0;
 const GUTTER_GAP: f32 = 10.0;
 const TICKS: f32 = 14.0;
+/// The row above the times for what is pinned to a moment (g-force tags, the mark, the car's
+/// trigger), so none of it covers a time or a lane. It takes the place of the gap under the transport.
+pub const TAGS: f32 = 12.0;
 const SEGMENTS: f32 = 10.0;
 const GAP: f32 = 4.0;
 /// (name, hint, height, has a center line).
@@ -60,7 +63,7 @@ pub struct LaneCache {
 /// Height of the whole widget.
 pub fn height(lanes: bool) -> f32 {
     let lanes_h: f32 = if lanes { LANES.iter().map(|l| GAP + l.2).sum() } else { 0.0 };
-    TICKS + GAP + SEGMENTS + lanes_h
+    TAGS + TICKS + GAP + SEGMENTS + lanes_h
 }
 
 /// Timeline seconds → screen x.
@@ -237,20 +240,21 @@ fn build_lanes(p: &Painter, store: &Store, dur: f64, bar: Rect, [speed, pedals, 
     }
     shapes.push(blink.into());
 
-    let label = |h: &HardEvent| format!("hard {} {}", if h.g < 0.0 { "brake" } else { "accel" }, g_text(h.g));
+    // The sign says which: minus is braking.
+    let label = |h: &HardEvent| g_text(h.g);
     let xs: Vec<f32> = store.hard.iter().map(|h| x(h.t)).collect();
     let tag_w = store.hard.first().map_or(0.0, |h| p.layout_no_wrap(label(h), theme::mono(10.0), TEXT).size().x + 10.0);
     let mut tags = Vec::new();
-    // A tag sits in the tick row above everything, clear of the lanes, with a line down to its moment
-    // on the speed lane. One that found no room is the line in the lane alone.
-    let top = speed.min.y - GAP - SEGMENTS - GAP - TICKS;
+    // A tag sits in the tag row above the times, with a line down to its moment on the speed lane.
+    // One that found no room is the line in the lane alone.
+    let top = speed.min.y - GAP - SEGMENTS - GAP - TICKS - TAGS;
     for ((h, &hx), tagged) in store.hard.iter().zip(&xs).zip(pick_tags(&store.hard, &xs, tag_w, bar.min.x)) {
         let from = if tagged { top } else { speed.min.y };
         shapes.push(Shape::line_segment([pos2(hx, from), pos2(hx, speed.max.y)], theme::line(TEXT)));
         if tagged {
             // Touching its line, so the two read as one flag.
             let left = if hx - tag_w < bar.min.x { hx } else { hx - tag_w };
-            tags.push((Rect::from_min_size(pos2(left, top), vec2(tag_w, TICKS - 3.0)), label(h)));
+            tags.push((Rect::from_min_size(pos2(left, top), vec2(tag_w, TAGS - 1.0)), label(h)));
         }
     }
     LaneCache { bar, shapes, tags }
@@ -259,12 +263,14 @@ fn build_lanes(p: &Painter, store: &Store, dur: f64, bar: Rect, [speed, pedals, 
 /// Draws into `rect` (`height(lanes)` tall) and seeks on click or drag. True while the pointer holds
 /// the scrubber: the caller decodes keyframes only meanwhile. The lanes toggle sits in the gutter.
 pub fn show(ui: &Ui, rect: Rect, player: Option<&mut Player>, lanes_open: &mut bool, view: View) -> bool {
+    // Everything below is laid out under the tag row; only the tags and their lines reach into it.
+    let (full, rect) = (rect, rect.with_min_y(rect.min.y + TAGS));
     let lanes = *lanes_open;
     let bar = rect.with_min_x(rect.min.x + GUTTER + GUTTER_GAP);
     let segs_top = rect.min.y + TICKS + GAP;
     let segs = Rect::from_min_size(pos2(bar.min.x, segs_top), vec2(bar.width(), SEGMENTS));
 
-    let p = ui.painter_at(rect);
+    let p = ui.painter_at(full);
     let gutter = |y: f32, text: &str, size: f32, color: Color32| {
         p.text(pos2(bar.min.x - GUTTER_GAP, y), Align2::RIGHT_CENTER, text, theme::mono(size), color);
     };
@@ -347,7 +353,7 @@ pub fn show(ui: &Ui, rect: Rect, player: Option<&mut Player>, lanes_open: &mut b
         let g = p.layout_no_wrap("mark".to_owned(), theme::medium(10.0), theme::YELLOW_INK);
         let w = g.size().x + 10.0;
         let left = if x1 + 4.0 + w > bar.max.x { x0 - 4.0 - w } else { x1 + 4.0 };
-        let r = Rect::from_min_size(pos2(left, rect.min.y), vec2(w, TICKS - 3.0));
+        let r = Rect::from_min_size(pos2(left, full.min.y), vec2(w, TAGS - 1.0));
         p.rect_filled(r, 0.0, theme::YELLOW);
         p.galley(pos2(r.min.x + 5.0, r.center().y - g.size().y / 2.0), g, theme::YELLOW_INK);
     }
@@ -362,11 +368,11 @@ pub fn show(ui: &Ui, rect: Rect, player: Option<&mut Player>, lanes_open: &mut b
     }
     if let Some((t, label)) = view.flag.filter(|f| (0.0..=dur).contains(&f.0)) {
         let fx = x(t);
-        p.extend(Shape::dashed_line(&[pos2(fx, rect.min.y), pos2(fx, rect.max.y)], theme::line(TEXT), 3.0, 3.0));
+        p.extend(Shape::dashed_line(&[pos2(fx, full.min.y), pos2(fx, rect.max.y)], theme::line(TEXT), 3.0, 3.0));
         let g = p.layout_no_wrap(label, theme::medium(10.0), BG);
         let w = g.size().x + 10.0;
         let left = if fx - 4.0 - w < bar.min.x { fx + 4.0 } else { fx - 4.0 - w };
-        let r = Rect::from_min_size(pos2(left, rect.min.y), vec2(w, TICKS));
+        let r = Rect::from_min_size(pos2(left, full.min.y), vec2(w, TAGS - 1.0));
         p.rect_filled(r, 0.0, TEXT);
         p.galley(pos2(r.min.x + 5.0, r.center().y - g.size().y / 2.0), g, BG);
     }
@@ -528,7 +534,7 @@ mod tests {
 
     #[test]
     fn height_counts_lanes_only_when_open() {
-        assert_eq!(height(false), 28.0);
-        assert_eq!(height(true), 28.0 + 4.0 * 4.0 + 34.0 + 28.0 + 28.0 + 14.0);
+        assert_eq!(height(false), 40.0);
+        assert_eq!(height(true), 40.0 + 4.0 * 4.0 + 34.0 + 28.0 + 28.0 + 14.0);
     }
 }

@@ -2937,7 +2937,7 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
 name = "openteslacam"
-version = "2.2.2"
+version = "2.3.0"
 dependencies = [
  "bytemuck",
  "eframe",
@@ -2953,7 +2953,7 @@ dependencies = [
 
 [[package]]
 name = "openteslacam-setup"
-version = "2.2.2"
+version = "2.3.0"
 dependencies = [
  "eframe",
  "rfd",
