@@ -319,7 +319,7 @@ fn row(ui: &mut Ui, ev: &Event, mark: Option<f64>, selected: bool, thumb: Option
     let max = body.max.x - 6.0 - x;
     let top = cy - 26.0;
     let w = theme::label(p, pos2(x, top + 8.0), &t.time, theme::medium(12.5), dim(TEXT), max);
-    theme::badge(p, pos2(x + w + 6.0, top + 8.0), t.tag, opacity);
+    theme::badge(p, pos2(x + w + 6.0, top + 8.0), t.tag, opacity, ev.encrypted);
     theme::label(p, pos2(x, top + 27.0), &t.line2, theme::sans(12.5), dim(TEXT2), max);
     theme::label(p, pos2(x, top + 45.0), &t.meta, theme::mono(11.0), dim(TEXT3), max);
     (r.clicked() && !ev.encrypted, r.secondary_clicked())

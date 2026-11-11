@@ -87,7 +87,8 @@ windows subsystem; CLI flags attach to the parent console (`attach_console`), so
 2. Monochrome, hard edges: zero rounding, IBM Plex Mono for labels/controls/numbers, Plex Sans for prose. Colors
    and fonts come from `ui/theme.rs`. The only colors are its `RED`, `YELLOW` and `GREEN` (the macOS window
    buttons), used sparingly, always as a fill and only where the color itself says something: red removes
-   footage or brakes, yellow blinks, green is a step forward (an update). Never for decoration or plain text.
+   footage or brakes; yellow is a caution, a thing put aside (archive) or the user's own mark, and the blinkers;
+   green is a step forward (an update). Never for decoration; the one colored text is `delete` in a menu.
 3. All controls in a row are the same size. The primary action is filled, never larger; an active toggle is
    underlined. Widgets are painted into exact rects handed out by `theme::Row`, not egui's stock widgets.
 4. Each signal is drawn in the form that fits its data (area for speed, blocks for brake, line for steering,

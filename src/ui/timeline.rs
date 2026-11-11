@@ -23,8 +23,10 @@ const LANES: [(&str, &str, f32, bool); 4] = [
     ("autopilot", "", 14.0, false),
 ];
 
-/// Chevrons closer than this would smear together on long events.
+/// Flashes closer than this count as one place on the bar.
 const CHEVRON_PX: f32 = 6.0;
+/// Height of a blinker band on the steering lane's edge.
+const BLINK_H: f32 = 2.0;
 /// Between a hard moment and its tag, and between tags.
 const TAG_GAP: f32 = 6.0;
 /// The steering lane's scale in degrees: past this the trace sits at the lane's edge.
@@ -156,10 +158,16 @@ fn lane_rects(bar: Rect, mut y: f32) -> [Rect; 4] {
     })
 }
 
-fn chevron(x: f32, top: f32, tip_left: bool) -> Shape {
-    let (outer, tip) = if tip_left { (2.0, -2.0) } else { (-2.0, 2.0) };
-    let pts = vec![pos2(x + outer, top + 1.0), pos2(x + tip, top + 4.0), pos2(x + outer, top + 7.0)];
-    Shape::line(pts, Stroke::new(1.5, TEXT))
+/// Sorted flash positions as (from, to) stretches: flashes no further than `gap` apart are one signal.
+fn runs(xs: &[f32], gap: f32) -> Vec<(f32, f32)> {
+    let mut out: Vec<(f32, f32)> = Vec::new();
+    for &x in xs {
+        match out.last_mut().filter(|r| x - r.1 <= gap) {
+            Some(r) => r.1 = x,
+            None => out.push((x, x)),
+        }
+    }
+    out
 }
 
 /// Everything per-pixel of the lanes, from the store's downsampled columns (design rule 4).
@@ -215,11 +223,19 @@ fn build_lanes(p: &Painter, store: &Store, dur: f64, bar: Rect, [speed, pedals, 
     shapes.push(brake_fill.into());
     shapes.push(Shape::line_segment([pos2(bar.min.x, ped_c), pos2(bar.max.x, ped_c)], theme::line(LINE2)));
     shapes.extend(steer_lines);
-    // Tops from the mockup: left at 2, right at 18 in the 28 px lane.
+    // A signal is one amber band on the lane's edge, left on top and right below like the steering
+    // line itself, and clear of it. One mark per flash was unreadable over the line.
     let screen_xs = |ts: &[f64]| ts.iter().map(|&t| x(t)).collect::<Vec<f32>>();
     let [left, right] = thin(&screen_xs(&store.left), &screen_xs(&store.right), CHEVRON_PX);
-    shapes.extend(left.into_iter().map(|cx| chevron(cx, steering.min.y + 2.0, true)));
-    shapes.extend(right.into_iter().map(|cx| chevron(cx, steering.min.y + 18.0, false)));
+    // Flashes come about every 0.7 s: 1.5 s apart is still the same signal.
+    let gap = (1.5 * bar.width() / dur.max(1e-3) as f32).max(2.0 * CHEVRON_PX);
+    let mut blink = Mesh::default();
+    for (xs, y) in [(left, steering.min.y), (right, steering.max.y - BLINK_H)] {
+        for (a, b) in runs(&xs, gap) {
+            blink.add_colored_rect(Rect::from_x_y_ranges(a..=(b + 3.0).min(bar.max.x), y..=y + BLINK_H), theme::YELLOW);
+        }
+    }
+    shapes.push(blink.into());
 
     let label = |h: &HardEvent| format!("hard {} {}", if h.g < 0.0 { "brake" } else { "accel" }, g_text(h.g));
     let xs: Vec<f32> = store.hard.iter().map(|h| x(h.t)).collect();
@@ -319,16 +335,16 @@ pub fn show(ui: &Ui, rect: Rect, player: Option<&mut Player>, lanes_open: &mut b
     // The mark: a bright cap over its span with solid ends, and its word beside it.
     if let Some((a, b)) = view.mark.filter(|m| m.0 <= dur && m.1 >= 0.0) {
         let (x0, x1) = (x(a), x(b).max(x(a) + 2.0));
-        p.rect_filled(Rect::from_x_y_ranges(x0..=x1, segs_top - 3.0..=segs_top - 1.0), 0.0, TEXT);
+        // Yellow, like a highlighter: the user's own mark, apart from the car's trigger flag.
+        p.rect_filled(Rect::from_x_y_ranges(x0..=x1, segs_top - 3.0..=segs_top - 1.0), 0.0, theme::YELLOW);
         p.vline(x0 + 0.5, segs_top - 3.0..=rect.max.y, theme::line(TEXT));
         p.vline(x1 - 0.5, segs_top - 3.0..=rect.max.y, theme::line(TEXT));
-        let g = p.layout_no_wrap("mark".to_owned(), theme::medium(10.0), TEXT);
+        let g = p.layout_no_wrap("mark".to_owned(), theme::medium(10.0), theme::YELLOW_INK);
         let w = g.size().x + 10.0;
         let left = if x1 + 4.0 + w > bar.max.x { x0 - 4.0 - w } else { x1 + 4.0 };
         let r = Rect::from_min_size(pos2(left, rect.min.y), vec2(w, TICKS - 3.0));
-        p.rect_filled(r, 0.0, BG);
-        p.rect_stroke(r, 0.0, theme::line(TEXT), StrokeKind::Inside);
-        p.galley(pos2(r.min.x + 5.0, r.center().y - g.size().y / 2.0), g, TEXT);
+        p.rect_filled(r, 0.0, theme::YELLOW);
+        p.galley(pos2(r.min.x + 5.0, r.center().y - g.size().y / 2.0), g, theme::YELLOW_INK);
     }
     if lane_store.is_some()
         && let Some(cache) = view.cache
@@ -446,6 +462,12 @@ mod tests {
         // Sparse flashes stay where they are: an even rhythm stays even.
         let sparse = [3.0, 13.7, 24.4, 35.1];
         assert_eq!(thin(&sparse, &[], 6.0)[0], sparse);
+    }
+
+    #[test]
+    fn flashes_join_into_one_band_per_signal() {
+        assert_eq!(runs(&[10.0, 16.0, 22.0, 80.0, 86.0, 200.0], 12.0), [(10.0, 22.0), (80.0, 86.0), (200.0, 200.0)]);
+        assert!(runs(&[], 12.0).is_empty());
     }
 
     #[test]

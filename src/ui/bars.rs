@@ -77,7 +77,7 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
         let Some(ev) = app.current.map(|i| &app.events[i]) else { return };
         let p = ui.painter_at(row.rest.expand2(vec2(0.0, 8.0)));
         let (x, y) = (row.rest.min.x, bar.center().y);
-        let badge_w = theme::badge(&p, pos2(x, y - 9.0), events::kind_tag(ev.kind), 1.0);
+        let badge_w = theme::badge(&p, pos2(x, y - 9.0), events::kind_tag(ev.kind), 1.0, false);
         let title_x = x + badge_w + 8.0;
         theme::label(&p, pos2(title_x, y - 9.0), &events::title(ev), theme::medium(13.0), TEXT, row.rest.max.x - title_x);
         theme::label(&p, pos2(x, y + 10.0), &events::subtitle(ev), theme::sans(12.5), TEXT3, row.rest.width());

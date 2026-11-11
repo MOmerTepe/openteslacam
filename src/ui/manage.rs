@@ -5,10 +5,10 @@
 
 use super::App;
 use super::export::{BTN_H, W, check, footer, row};
-use super::theme::{self, BG, Face, Icon, LINE2, Look, Row, TEXT, TEXT2, TEXT3};
+use super::theme::{self, BG, Face, Icon, LINE2, Look, RED, RED_INK, Row, TEXT, TEXT2, TEXT3, YELLOW, YELLOW_INK};
 use crate::library::{CAMERAS, Event};
 use crate::manage::{self, Action, Plan};
-use eframe::egui::{Area, Color32, Context, Frame, Id, Key, Margin, Modal, Order, Pos2, Sense, Ui, pos2, vec2};
+use eframe::egui::{Align2, Area, Color32, Context, CursorIcon, Frame, Id, Key, Margin, Modal, Order, Pos2, Role, Sense, Ui, WidgetInfo, pos2, vec2};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::thread;
 use std::time::Duration;
@@ -114,11 +114,19 @@ fn menu(app: &mut App, ctx: &Context, ev: &Event, at: Pos2) {
         let frame = Frame::NONE.fill(BG).stroke(theme::line(LINE2)).inner_margin(Margin::same(1));
         let inner = frame.show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            let item = |ui: &mut Ui, label: &str, on: bool| {
-                let (r, _) = ui.allocate_exact_size(vec2(MENU_W, BTN_H), Sense::hover());
-                theme::button(ui, r, Face::Text(label), Look::Bare, on, label).clicked()
+            // The color says what the item does: pointed at, it fills. Delete is red even before.
+            let item = |ui: &mut Ui, label: &str, on: bool, idle: Color32, (fill, ink): (Color32, Color32)| {
+                let (rect, r) = ui.allocate_exact_size(vec2(MENU_W, BTN_H), if on { Sense::click() } else { Sense::hover() });
+                r.widget_info(|| WidgetInfo::labeled(Role::Button, on, label));
+                let hot = on && r.hovered();
+                if hot {
+                    ui.painter().rect_filled(rect, 0.0, fill);
+                }
+                let (font, fg) = if hot { (theme::medium(11.5), ink) } else { (theme::mono(11.5), if on { idle } else { LINE2 }) };
+                ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, font, fg);
+                r.on_hover_cursor(if on { CursorIcon::PointingHand } else { CursorIcon::NotAllowed }).clicked()
             };
-            (item(ui, "archive", archive.is_some()), item(ui, "delete", true))
+            (item(ui, "archive", archive.is_some(), TEXT, (YELLOW, YELLOW_INK)), item(ui, "delete", true, RED, (RED, RED_INK)))
         });
         inner.inner
     });
@@ -303,7 +311,7 @@ fn contents(ui: &mut Ui, app: &mut App) -> Step {
 
     let mut r = footer(ui);
     let ready = matches!(&app.manage.pending, Some((_, Ok(_))));
-    if theme::button(ui, r.right(BTN_W, 8.0), Face::Text("confirm"), Look::Primary, ready, "confirm").clicked() {
+    if theme::button(ui, r.right(BTN_W, 8.0), Face::Text("confirm"), Look::Danger, ready, "confirm").clicked() {
         step = Step::Confirm;
     }
     if theme::text_button(ui, r.right(BTN_W, 8.0), "cancel", true).clicked() {

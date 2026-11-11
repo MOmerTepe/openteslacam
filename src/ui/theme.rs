@@ -21,11 +21,14 @@ pub const VIDEO_BG: Color32 = Color32::from_rgb(0x0c, 0x0c, 0x0b);
 pub const HOVER: Color32 = Color32::from_rgb(0x1b, 0x1b, 0x19);
 pub const SELECTED: Color32 = Color32::from_rgb(0x20, 0x20, 0x1e);
 // The only colors, from the macOS window buttons (plex gray's status tokens). Always a fill, never
-// text or a hairline, and only where the color says something: red removes or brakes, yellow blinks,
-// green is a step forward. Lettering on them is the matching `_INK`.
+// a hairline, and only where the color says something: red removes or brakes; yellow is a caution, a
+// thing put aside or the user's own mark, and the blinkers; green is a step forward. Lettering on
+// them is the matching `_INK`. The one colored text is `delete` in a menu, which is red before it is
+// pointed at.
 pub const RED: Color32 = Color32::from_rgb(0xed, 0x6a, 0x5e);
 pub const RED_INK: Color32 = Color32::from_rgb(0x69, 0x11, 0x0a);
 pub const YELLOW: Color32 = Color32::from_rgb(0xf4, 0xbf, 0x4f);
+pub const YELLOW_INK: Color32 = Color32::from_rgb(0x8f, 0x59, 0x1d);
 pub const GREEN: Color32 = Color32::from_rgb(0x61, 0xc5, 0x54);
 pub const GREEN_INK: Color32 = Color32::from_rgb(0x29, 0x60, 0x17);
 
@@ -275,12 +278,16 @@ pub fn dashed_rect(p: &Painter, rect: Rect, color: Color32) {
     p.extend(Shape::dashed_line(&[r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()], line(color), 3.0, 3.0));
 }
 
-/// Width of what it drew; `left_center` is the left edge of the border.
-pub fn badge(p: &Painter, left_center: Pos2, text: &str, opacity: f32) -> f32 {
-    let fg = TEXT2.gamma_multiply(opacity);
+/// Width of what it drew; `left_center` is the left edge of the border. `caution` fills it yellow.
+pub fn badge(p: &Painter, left_center: Pos2, text: &str, opacity: f32, caution: bool) -> f32 {
+    let fg = if caution { YELLOW_INK } else { TEXT2.gamma_multiply(opacity) };
     let g = p.layout_no_wrap(text.to_owned(), mono(10.5), fg);
     let rect = Rect::from_center_size(pos2(left_center.x + g.size().x / 2.0 + 6.0, left_center.y), vec2(g.size().x + 12.0, 18.0));
-    p.rect_stroke(rect, 0.0, line(LINE2.gamma_multiply(opacity)), StrokeKind::Inside);
+    if caution {
+        p.rect_filled(rect, 0.0, YELLOW.gamma_multiply(opacity));
+    } else {
+        p.rect_stroke(rect, 0.0, line(LINE2.gamma_multiply(opacity)), StrokeKind::Inside);
+    }
     p.galley(pos2(rect.min.x + 6.0, left_center.y - g.size().y / 2.0), g, fg);
     rect.width()
 }
