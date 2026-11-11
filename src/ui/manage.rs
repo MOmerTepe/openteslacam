@@ -6,7 +6,7 @@ use super::export::{BTN_H, W, check, footer, row};
 use super::theme::{self, BG, Face, Icon, LINE2, Look, Row, TEXT, TEXT2, TEXT3};
 use crate::library::CAMERAS;
 use crate::manage::{self, Action, Plan};
-use eframe::egui::{Color32, Context, Frame, Id, Margin, Modal, Ui};
+use eframe::egui::{Color32, Context, Frame, Id, Margin, Modal, Rect, Ui, pos2, vec2};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::thread;
 use std::time::Duration;
@@ -109,10 +109,14 @@ fn mb(bytes: u64) -> String {
 }
 
 /// One choice: its button on the left, what it does beside it.
+/// The text wraps and the row grows with it: it says what will be removed, so none of it may be cut off.
 fn choice(ui: &mut Ui, label: &'static str, about: &str, enabled: bool) -> bool {
-    let mut r = Row::new(row(ui, BTN_H));
-    let clicked = theme::text_button(ui, r.left(BTN_W, 12.0), label, enabled).clicked();
-    theme::label(ui.painter(), r.rest.left_center(), about, theme::sans(12.5), if enabled { TEXT2 } else { TEXT3 }, r.rest.width());
+    let color = if enabled { TEXT2 } else { TEXT3 };
+    let g = ui.painter().layout(about.to_owned(), theme::sans(12.5), color, W - BTN_W - 12.0);
+    let r = row(ui, g.size().y.max(BTN_H));
+    let clicked = theme::text_button(ui, Rect::from_min_size(r.min, vec2(BTN_W, BTN_H)), label, enabled).clicked();
+    // One line sits level with the button; more start at its top.
+    ui.painter().galley(pos2(r.min.x + BTN_W + 12.0, r.min.y + ((BTN_H - g.size().y) / 2.0).max(0.0)), g, color);
     ui.add_space(8.0);
     clicked
 }
@@ -149,8 +153,8 @@ fn contents(ui: &mut Ui, app: &mut App) -> Step {
     let start = app.player.as_ref().map_or(0.0, |p| p.start as f64);
     let clock = |t: f64| super::events::hms((start + t) as i64);
     let about = match trim {
-        Some((a, b, true)) => format!("Keeps In to Out, {} → {}, in whole segments, and removes the rest.", clock(a), clock(b)),
-        Some((a, b, false)) if b > a => format!("Keeps the mark, {} → {}, in whole segments, and removes the rest.", clock(a), clock(b)),
+        Some((a, b, true)) => format!("Keeps In to Out, {} → {}, and removes the rest. Whole segments are kept, so a little more may stay.", clock(a), clock(b)),
+        Some((a, b, false)) if b > a => format!("Keeps the mark, {} → {}, and removes the rest. Whole segments are kept, so a little more may stay.", clock(a), clock(b)),
         Some((a, ..)) => format!("Keeps the segments around the mark at {} and removes the rest.", clock(a)),
         None => "Set In and Out, or a mark, to say which part to keep.".to_owned(),
     };
@@ -161,12 +165,16 @@ fn contents(ui: &mut Ui, app: &mut App) -> Step {
     if choice(ui, "drop cameras", "Removes the cameras that aren't ticked below.", true) {
         step = Step::Pick("drop cameras", Action::Cameras(app.manage.cams));
     }
-    let mut r = Row::new(row(ui, 16.0));
-    r.left(BTN_W, 12.0);
-    for cam in 0..6 {
-        check(ui, r.left((W - BTN_W - 12.0) / 6.0, 0.0), &CAMERAS[cam].replace("_repeater", " rep").replace("_pillar", " pil"), &mut app.manage.cams[cam]);
+    // Three to a row, as in the export dialog: six across cut the names down to "left …" twice.
+    for cams in [0..3, 3..6] {
+        let mut r = Row::new(row(ui, 16.0));
+        r.left(BTN_W, 12.0);
+        for cam in cams {
+            check(ui, r.left((W - BTN_W - 12.0) / 3.0, 0.0), CAMERAS[cam], &mut app.manage.cams[cam]);
+        }
+        ui.add_space(8.0);
     }
-    ui.add_space(14.0);
+    ui.add_space(6.0);
     if choice(ui, "archive", "Moves the event out of the list, into the library's Archive folder.", true)
         && let Some(lib) = app.settings.library_dir.clone()
     {

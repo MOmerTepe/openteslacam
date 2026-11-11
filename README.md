@@ -20,6 +20,12 @@ decrypt or play those clips.** They aren't real MP4 files, and only the car that
 To use your footage here, turn encryption off in the car: **Controls → Safety → Encrypt Dashcam Recordings**.
 Clips recorded after that are normal MP4s. Clips already encrypted stay unreadable.
 
+## What's new in 2.2.2
+
+- **The manage dialog's text was cut off.** The line saying what trim keeps ended in `…`, and the six camera
+  names were shortened until two pairs read the same. The text now wraps, and the cameras sit three to a row
+  with their full names.
+
 ## What's new in 2.2.1 (urgent fix)
 
 - **Trim removed footage inside In and Out.** In 2.2.0, `manage` → `trim` went by the event's mark even when In
@@ -112,7 +118,7 @@ macOS and Linux aren't packaged. The code isn't Windows-specific, but those buil
 
 ## Install
 
-Run `OpenTeslaCam-Setup-2.2.1.exe`. It installs for your user only and doesn't need administrator rights.
+Run `OpenTeslaCam-Setup-2.2.2.exe`. It installs for your user only and doesn't need administrator rights.
 Windows SmartScreen may warn you because the installer isn't code-signed yet.
 
 **Updating:** from 2.2 on, the app offers a newer version when it starts and installs it itself. Versions 2.0.1
@@ -138,7 +144,7 @@ powershell -ExecutionPolicy Bypass -File installer/detect-deps.ps1
 To uninstall, use Windows' installed apps. It removes only what setup installed, and leaves your clips,
 settings, saved layouts and Git.
 
-Unattended install: `OpenTeslaCam-Setup-2.2.1.exe --silent --dir <folder> [--desktop] [--tesla]`. Without
+Unattended install: `OpenTeslaCam-Setup-2.2.2.exe --silent --dir <folder> [--desktop] [--tesla]`. Without
 `--dir`, it updates the installed app where it is. Unattended uninstall: `uninstall.exe --uninstall --silent`.
 
 ## Usage

@@ -92,4 +92,36 @@ windows subsystem; CLI flags attach to the parent console (`attach_console`), so
 Sign conventions (measured on one HW4 car, Nov 2026): `steering_deg` > 0 is right; `accel_y` is longitudinal and
 negative when speeding up, so forward g is `-accel_y` and braking is negative g; `accel_x` is lateral (unused).
 
+## Versions and release notes
+
+**Version numbers are `x.y.z`.**
+
+- `x`: a major revision or remake (2.0 was the Rust rewrite). Settings or layouts may not carry over.
+- `y`: a feature update. It may include bug fixes. `z` goes back to 0.
+- `z`: bug fixes and hotfixes only. No features, no new settings, no new dialogs, no behaviour a user has to learn.
+  A fix that needs a feature to be done properly waits for the next `y`, or ships as the smallest fix alone.
+- If unsure between `y` and `z`: would the README's feature list change? Then it is `y`.
+- The version lives only in `[workspace.package]` in `Cargo.toml`. The tag is `vx.y.z`, the commit subject is
+  `Release x.y.z: <what changed, in a few words>`, and the setup is `OpenTeslaCam-Setup-x.y.z.exe`.
+
+**Release notes** (the GitHub release body, and the matching `What's new in x.y.z` section in the README):
+
+1. Title `OpenTeslaCam x.y.z`. Add `(urgent fix)` only when the release fixes something that removes or damages
+   footage, loses settings, or stops the app from starting or updating.
+2. Start with one sentence saying what kind of release it is. An urgent one starts with a bold line telling
+   people to update and which action to avoid until they have.
+3. Sections, in this order, leaving out the empty ones: `What's new` (features, `y` and `x` only), `Fixed`,
+   `If you were affected` (whenever a bug touched footage or settings: say whether anything is lost and how to
+   get it back), `Updating`.
+4. One bullet per change: a short bold name, then what the user sees, in plain words. Name buttons and keys as
+   they appear on screen, in backticks. No file, function or module names.
+5. For a fix, say what went wrong, when it happened and what happens now. Don't write only "fixed a bug".
+6. Say what is not known: a thing measured on one car, a path not tried on a real install.
+7. The app shows these notes as plain text with the Markdown marks stripped, so use only `##` headings, `-`
+   bullets, bold and backticks. No tables, images, nested lists or `[text](url)` links; write a URL out.
+8. The notes and the README section say the same thing. Past sections of the README are never rewritten.
+
+**Releasing:** tests pass, then `scripts/build-installer.ps1`, then commit, push, tag, and a GitHub release with
+the setup attached. The in-app updater reads GitHub's latest release, so a release is what users are offered.
+
 `PLAN.md` (git-ignored, local only) has the full plan, design table and recorded deviations, if present.
