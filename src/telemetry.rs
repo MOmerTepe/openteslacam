@@ -1,9 +1,11 @@
 //! One event's vehicle data on the event's timeline: lookup at a time, and everything the timeline
 //! lanes draw. Built off the UI thread.
 //!
-//! Sign conventions (the proto documents none, these follow the mockup and the fixture):
-//! `steering_deg` > 0 is left. `accel_x` is longitudinal, > 0 forward, so braking is negative g.
-// shortcut: both signs and the accel axis are unchecked on real footage (no clips in the repo); flip them in `Column::of`, `steer_y` and `smooth_g` if a real clip disagrees.
+//! Sign conventions (the proto documents none; measured on real HW4 footage in November 2026 against
+//! heading, speed and yaw): `steering_deg` > 0 is right. `accel_y` is longitudinal and negative when
+//! speeding up, so forward acceleration is `-accel_y` and braking is negative g. `accel_x` is lateral
+//! (> 0 in right turns) and unused.
+// shortcut: checked on one car only, other models or firmware may differ; flip `steer_y`, `steer_text`, `wheel` and `smooth_g` if a clip from one disagrees.
 
 use crate::library::Event;
 use crate::mp4;
@@ -156,11 +158,11 @@ fn smooth_g(r: &mut [Record]) {
     for i in 0..r.len() {
         let t = r[i].t;
         while hi < r.len() && r[hi].t <= t + G_WINDOW / 2.0 {
-            sum += r[hi].tel.accel_x;
+            sum -= r[hi].tel.accel_y;
             hi += 1;
         }
         while r[lo].t < t - G_WINDOW / 2.0 {
-            sum -= r[lo].tel.accel_x;
+            sum += r[lo].tel.accel_y;
             lo += 1;
         }
         r[i].g = (sum / (hi - lo) as f64 / STANDARD_G) as f32;
@@ -264,7 +266,7 @@ fn read_segment(job: &Job) -> Vec<Record> {
     frames
         .into_iter()
         // Corrupt numbers must not reach the lanes; a finite record is all the UI assumes.
-        .filter(|f| [f.t.speed_mps, f.t.accel_pct, f.t.steering_deg].iter().all(|v| v.is_finite()) && f.t.accel_x.is_finite())
+        .filter(|f| [f.t.speed_mps, f.t.accel_pct, f.t.steering_deg].iter().all(|v| v.is_finite()) && f.t.accel_y.is_finite())
         .map(|f| Record { t: job.start + f.pts as f64 / ts, g: 0.0, tel: f.t })
         .filter(|r| r.t < job.limit)
         .collect()
@@ -351,9 +353,10 @@ mod tests {
 
     #[test]
     fn hard_moments_merge_into_one_marker_at_the_peak() {
+        // `ms2` is forward acceleration; the car reports it as -accel_y.
         let pulse = |a: f64, b: f64, ms2: f64, t: f64, s: &mut Telemetry| {
             if (a..b).contains(&t) {
-                s.accel_x = ms2;
+                s.accel_y = -ms2;
             }
         };
         // Two pulses of one stop, 1 s apart, the second stronger.
@@ -381,9 +384,11 @@ mod tests {
         }));
         assert!(store.hard.is_empty(), "{:?}", store.hard);
         // Smoothing doesn't reach across a gap.
-        let mut r = span(0.0, 1.0, |_, s| s.accel_x = -8.0);
+        // Positive accel_y is braking: negative g.
+        let mut r = span(0.0, 1.0, |_, s| s.accel_y = 8.0);
         r.extend(span(100.0, 101.0, |_, _| ()));
         let store = Store::build(r);
+        assert!(store.at(0.5).unwrap().g < -0.5);
         assert_eq!(store.at(100.2).unwrap().g, 0.0);
         assert_eq!(store.hard.len(), 1);
     }

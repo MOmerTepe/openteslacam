@@ -289,7 +289,9 @@ pub fn run(job: &Job, cancel: &AtomicBool, mut progress: impl FnMut(f32)) -> Res
         Mode::Lossless(cams) => lossless(job, *cams, &mut parts, &mut notes, cancel, &mut progress)?,
         Mode::Composite(c) => composite(job, c, &store, &mut parts, &mut notes, cancel, &mut progress)?,
     }
-    if job.csv {
+    if job.csv && !store.records.iter().any(|r| (job.from..=job.to).contains(&r.t)) {
+        notes.push("no vehicle data in this range".to_owned());
+    } else if job.csv {
         let part = parts.add(named(&job.base, "-telemetry.csv"));
         let write = || -> io::Result<()> {
             let mut f = BufWriter::new(File::create(&part)?);
@@ -1142,6 +1144,18 @@ mod tests {
         let e = run(&job(ev, 1.0, 2.0, out.join("x"), only(1), false), &AtomicBool::new(false), |_| {}).unwrap_err();
         assert!(e.contains("no footage"), "{e}");
         assert!(!list(&out).iter().any(|f| f.starts_with('x')));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn no_vehicle_data_writes_no_csv_and_says_so() {
+        let (root, out) = fixture_dirs("nocsv");
+        let ev = event(&root, Kind::Sentry);
+        let base = out.join("s");
+        let done = run(&job(ev, 0.0, 1.0, base.clone(), only(0), true), &AtomicBool::new(false), |_| {}).unwrap();
+        assert_eq!(done.files, [named(&base, "-front.mp4")]);
+        assert_eq!(done.notes, ["no vehicle data in this range"]);
+        assert_eq!(list(&out), ["s-front.mp4"]);
         let _ = fs::remove_dir_all(&root);
     }
 

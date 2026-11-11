@@ -103,9 +103,9 @@ pub fn event_flag(ev: &Event, start: i64) -> Option<(f64, String)> {
     Some(((ts - start) as f64, format!("{what} {}", hms(ts))))
 }
 
-/// y of a steering angle around the lane's center line: left (positive) up, right down.
+/// y of a steering angle around the lane's center line: left (negative) up, right down.
 pub fn steer_y(center: f32, half: f32, deg: f32) -> f32 {
-    center - deg.clamp(-STEER_MAX, STEER_MAX) / STEER_MAX * half
+    center + deg.clamp(-STEER_MAX, STEER_MAX) / STEER_MAX * half
 }
 
 /// One chevron per `px` of bar for each side (both sorted), at the first flash of either side there.
@@ -415,10 +415,10 @@ mod tests {
 
     #[test]
     fn steering_goes_up_for_left_and_stops_at_the_edge() {
-        // The fixture steers positive into a left turn; the mockup draws left up. Screen y grows down.
-        assert_eq!(steer_y(14.0, 13.0, 90.0), 7.5);
-        assert_eq!(steer_y(14.0, 13.0, -180.0), 27.0);
-        assert_eq!(steer_y(14.0, 13.0, 450.0), 1.0);
+        // Real cars steer negative into a left turn; the mockup draws left up. Screen y grows down.
+        assert_eq!(steer_y(14.0, 13.0, -90.0), 7.5);
+        assert_eq!(steer_y(14.0, 13.0, 180.0), 27.0, "positive is right: down");
+        assert_eq!(steer_y(14.0, 13.0, -450.0), 1.0);
         assert_eq!(steer_y(14.0, 13.0, 0.0), 14.0);
     }
 

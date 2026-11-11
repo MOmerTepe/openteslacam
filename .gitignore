@@ -9,3 +9,10 @@ design/
 # Added by cargo
 
 /target
+
+# Private notes and plans
+PLAN.md
+*.notes.md
+NOTES.md
+TODO.md
+openteslacam-legacy/

@@ -40,13 +40,13 @@ pub fn gear_slot(gear: i32) -> Option<usize> {
     GEARS.iter().position(|g| *g == sei::gear_letter(gear))
 }
 
-/// "16° left". Positive is left (see `telemetry`); straight ahead names no side.
+/// "16° right". Positive is right (see `telemetry`); straight ahead names no side.
 pub fn steer_text(deg: f32) -> String {
     let a = deg.abs().round();
     match deg {
         _ if a == 0.0 => "0°".to_owned(),
-        d if d > 0.0 => format!("{a:.0}° left"),
-        _ => format!("{a:.0}° right"),
+        d if d > 0.0 => format!("{a:.0}° right"),
+        _ => format!("{a:.0}° left"),
     }
 }
 
@@ -101,11 +101,11 @@ fn accelerator(p: &Painter, at: Pos2, pct: f32) {
     theme::label(p, pos2(bar.max.x + 6.0, at.y), &format!("{pct:.0} %"), theme::mono(12.0), TEXT, 60.0);
 }
 
-/// Turned by the wheel's angle: left is counter-clockwise.
+/// Turned by the wheel's angle: right (positive) is clockwise, as egui's y points down.
 fn wheel(p: &Painter, center: Pos2, deg: f32) {
     let s = 16.0 / 24.0;
     let st = Stroke::new(1.75 * s, TEXT);
-    let rot = Rot2::from_angle(-deg.to_radians());
+    let rot = Rot2::from_angle(deg.to_radians());
     let at = |x: f32, y: f32| center + rot * (Vec2::new(x, y) * s);
     p.circle_stroke(center, 9.0 * s, st);
     p.circle_stroke(center, 2.0 * s, st);
@@ -209,8 +209,8 @@ mod tests {
 
     #[test]
     fn steering_text() {
-        assert_eq!(steer_text(16.4), "16° left");
-        assert_eq!(steer_text(-220.0), "220° right");
+        assert_eq!(steer_text(16.4), "16° right");
+        assert_eq!(steer_text(-220.0), "220° left");
         assert_eq!(steer_text(0.0), "0°");
         assert_eq!(steer_text(-0.3), "0°");
     }

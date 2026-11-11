@@ -20,6 +20,16 @@ decrypt or play those clips.** They aren't real MP4 files, and only the car that
 To use your footage here, turn encryption off in the car: **Controls → Safety → Encrypt Dashcam Recordings**.
 Clips recorded after that are normal MP4s. Clips already encrypted stay unreadable.
 
+## What's new in 2.1
+
+- **Steering and g-force read the right way:** checked against real drives, the steering lane had left and right
+  swapped, and the g-force number and the hard-brake and hard-acceleration markers were reading sideways force
+  instead of braking. Both now follow what the car did.
+- **No empty telemetry file:** an export of footage without vehicle data, like a parked Sentry clip, no longer
+  writes a CSV with only a header. The export says there was no vehicle data instead.
+- **Setup and folders with non-English letters:** setup now reads where the app is installed in a way that
+  keeps letters like `Ö` intact, so updating in place works in a folder like `C:\Users\Ömer`.
+
 ## What's new in 2.0.1
 
 - **Hardware-accelerated export:** a composited export encodes on the graphics card where the machine has a GPU
@@ -75,7 +85,7 @@ macOS and Linux aren't packaged. The code isn't Windows-specific, but those buil
 
 ## Install
 
-Run `OpenTeslaCam-Setup-2.0.1.exe`. It installs for your user only and doesn't need administrator rights.
+Run `OpenTeslaCam-Setup-2.1.0.exe`. It installs for your user only and doesn't need administrator rights.
 Windows SmartScreen may warn you because the installer isn't code-signed yet.
 
 **Updating:** when a newer version is out, the app shows `update to …` in the top bar, which opens its
@@ -100,7 +110,7 @@ powershell -ExecutionPolicy Bypass -File installer/detect-deps.ps1
 To uninstall, use Windows' installed apps. It removes only what setup installed, and leaves your clips,
 settings, saved layouts and Git.
 
-Unattended install: `OpenTeslaCam-Setup-2.0.1.exe --silent --dir <folder> [--desktop] [--tesla]`. Without
+Unattended install: `OpenTeslaCam-Setup-2.1.0.exe --silent --dir <folder> [--desktop] [--tesla]`. Without
 `--dir`, it updates the installed app where it is. Unattended uninstall: `uninstall.exe --uninstall --silent`.
 
 ## Usage

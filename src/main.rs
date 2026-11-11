@@ -8,13 +8,9 @@ mod fixture;
 mod library;
 #[cfg(windows)]
 mod mf;
-// Phase 0 scaffolding: later phases call into these modules.
-#[allow(dead_code)]
 mod mp4;
-#[allow(dead_code)]
 mod mux;
 mod player;
-#[allow(dead_code)]
 mod sei;
 mod telemetry;
 mod ui;

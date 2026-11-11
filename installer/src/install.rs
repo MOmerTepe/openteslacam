@@ -92,22 +92,18 @@ pub struct Installed {
 
 /// What Windows' installed-apps entry says is installed, if the app is still where it says.
 pub fn installed() -> Option<Installed> {
-    let out = Command::new(system_exe("reg.exe")).args(["query", UNINSTALL_KEY]).creation_flags(CREATE_NO_WINDOW).output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let found = parse_installed(&text)?;
+    // Not `reg query`: it prints in the OEM code page, which mangles a non-ASCII InstallLocation.
+    const SCRIPT: &str = r"[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\OpenTeslaCam'; if (Test-Path -LiteralPath $k) { $p = Get-ItemProperty -LiteralPath $k; [string]$p.InstallLocation; [string]$p.DisplayVersion }";
+    let out = powershell().args(["-Command", SCRIPT]).output().ok()?;
+    let found = parse_installed(&String::from_utf8_lossy(&out.stdout))?;
     found.dir.join(APP_EXE).exists().then_some(found)
 }
 
-/// Reads `InstallLocation` and `DisplayVersion` from `reg query` output.
+/// Reads the `InstallLocation` and `DisplayVersion` lines the script in `installed` prints.
 fn parse_installed(text: &str) -> Option<Installed> {
-    let value = |name: &str| {
-        text.lines().find_map(|l| {
-            let mut f = l.trim().splitn(3, "    ");
-            (f.next()? == name && f.next()?.starts_with("REG_")).then(|| f.next().unwrap_or("").trim().to_owned())
-        })
-    };
-    let dir = value("InstallLocation").filter(|d| !d.is_empty())?;
-    Some(Installed { dir: PathBuf::from(dir), version: value("DisplayVersion").unwrap_or_default() })
+    let mut lines = text.lines();
+    let dir = lines.next().filter(|d| !d.is_empty())?;
+    Some(Installed { dir: PathBuf::from(dir), version: lines.next().unwrap_or("").to_owned() })
 }
 
 pub fn default_dir() -> String {
@@ -480,11 +476,11 @@ mod tests {
 
     #[test]
     fn reads_the_installed_folder_and_version() {
-        let out = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\OpenTeslaCam\r\n    DisplayName    REG_SZ    OpenTeslaCam\r\n    DisplayVersion    REG_SZ    2.0.0\r\n    InstallLocation    REG_SZ    D:\\My Apps\\OpenTeslaCam\r\n    NoModify    REG_DWORD    0x1\r\n\r\n";
-        let i = parse_installed(out).unwrap();
-        assert_eq!((i.dir, i.version.as_str()), (PathBuf::from(r"D:\My Apps\OpenTeslaCam"), "2.0.0"));
-        assert!(parse_installed("ERROR: The system was unable to find the specified registry key or value.").is_none());
-        assert!(parse_installed("    InstallLocation    REG_SZ    \r\n").is_none(), "an empty location isn't an install");
+        let i = parse_installed("C:\\Users\\Ömer\\My Apps\\OpenTeslaCam\r\n2.0.0\r\n").unwrap();
+        assert_eq!((i.dir, i.version.as_str()), (PathBuf::from(r"C:\Users\Ömer\My Apps\OpenTeslaCam"), "2.0.0"));
+        assert_eq!(parse_installed("D:\\OTC\r\n\r\n").unwrap().version, "", "a missing version is empty");
+        assert!(parse_installed("").is_none(), "no key, no install");
+        assert!(parse_installed("\r\n2.0.0\r\n").is_none(), "an empty location isn't an install");
     }
 
     #[test]

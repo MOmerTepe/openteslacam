@@ -227,7 +227,7 @@ fn drive(n: usize, (mut lat, mut lon, mut heading): (f64, f64, f64)) -> Vec<Tele
                 }
                 if (0.46..0.52).contains(&u) {
                     s.blink_right = flash;
-                    steer = -10.0 * ((u - 0.46) / 0.06 * std::f64::consts::TAU).sin();
+                    steer = 10.0 * ((u - 0.46) / 0.06 * std::f64::consts::TAU).sin();
                 }
                 0.5 * (15.0 + (t * 0.4).sin() - v)
             } else if u < 0.80 {
@@ -242,20 +242,21 @@ fn drive(n: usize, (mut lat, mut lon, mut heading): (f64, f64, f64)) -> Vec<Tele
                 s.accel_pct = 30.0;
                 if u < 0.88 {
                     s.blink_left = flash;
-                    steer = 220.0 * ((u - 0.80) / 0.08 * std::f64::consts::PI).sin();
+                    steer = -220.0 * ((u - 0.80) / 0.08 * std::f64::consts::PI).sin();
                 }
                 if v < 8.0 { 1.5 } else { 0.0 }
             };
             v = (v + a * dt).max(0.0);
-            // Bicycle model: 15:1 steering ratio, 2.9 m wheelbase; positive steering turns left.
+            // Bicycle model: 15:1 steering ratio, 2.9 m wheelbase; positive steering turns right (clockwise).
             let yaw = v * (steer.to_radians() / 15.0).tan() / 2.9;
-            heading = (heading - yaw.to_degrees() * dt).rem_euclid(360.0);
+            heading = (heading + yaw.to_degrees() * dt).rem_euclid(360.0);
             lat += v * heading.to_radians().cos() * dt / 111_320.0;
             lon += v * heading.to_radians().sin() * dt / (111_320.0 * lat.to_radians().cos());
             s.speed_mps = v as f32;
             s.steering_deg = steer as f32;
             (s.lat, s.lon, s.heading) = (lat, lon, heading);
-            (s.accel_x, s.accel_y, s.accel_z) = (if v > 0.0 || a > 0.0 { a } else { 0.0 }, v * yaw, 0.15 * (t * 9.0).sin());
+            // As a real car reports it: accel_x lateral (> 0 in right turns), accel_y minus longitudinal.
+            (s.accel_x, s.accel_y, s.accel_z) = (v * yaw, if v > 0.0 || a > 0.0 { -a } else { 0.0 }, 0.15 * (t * 9.0).sin());
             s
         })
         .collect()
@@ -415,8 +416,11 @@ mod tests {
         for ap in [AP_TACC, AP_AUTOSTEER, AP_FSD] {
             assert!(any(&|t| t.autopilot == ap));
         }
-        assert!(any(&|t| t.accel_x < -7.0 && t.brake), "hard brake");
-        assert!(any(&|t| t.steering_deg > 200.0));
+        assert!(any(&|t| t.accel_y > 7.0 && t.brake), "hard brake");
+        assert!(any(&|t| t.steering_deg < -200.0 && t.blink_left), "left turn");
+        // As on a real car: steering right turns the heading clockwise and pushes accel_x positive.
+        let turn = d.windows(2).find(|w| w[1].steering_deg > 5.0 && w[1].speed_mps > 5.0).expect("a right swerve");
+        assert!(turn[1].heading > turn[0].heading && turn[1].accel_x > 0.0, "{turn:?}");
         let max = d.iter().map(|t| t.speed_mps).fold(0.0, f32::max);
         assert!((14.0..16.0).contains(&max));
         // Moved a few hundred metres and stayed in Berlin.
