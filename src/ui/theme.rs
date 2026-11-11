@@ -283,6 +283,8 @@ pub enum Icon {
     Lock,
     Focus,
     Crop,
+    Trim,
+    DropCameras,
     Close,
 }
 
@@ -333,6 +335,18 @@ pub fn paint_icon(p: &Painter, center: Pos2, icon: Icon, size: f32, color: Color
         Icon::Crop => {
             open(&[(7.0, 3.0), (7.0, 17.0), (21.0, 17.0)]);
             open(&[(3.0, 7.0), (17.0, 7.0), (17.0, 21.0)]);
+        }
+        // In and Out brackets with what's kept between them.
+        Icon::Trim => {
+            open(&[(8.0, 5.0), (4.0, 5.0), (4.0, 19.0), (8.0, 19.0)]);
+            open(&[(16.0, 5.0), (20.0, 5.0), (20.0, 19.0), (16.0, 19.0)]);
+            filled(&[(8.0, 10.0), (16.0, 10.0), (16.0, 14.0), (8.0, 14.0)]);
+        }
+        // A camera, struck through.
+        Icon::DropCameras => {
+            closed(&[(3.0, 8.0), (14.0, 8.0), (14.0, 17.0), (3.0, 17.0)]);
+            closed(&[(14.0, 11.0), (21.0, 8.0), (21.0, 17.0), (14.0, 14.0)]);
+            open(&[(4.0, 21.0), (20.0, 4.0)]);
         }
         Icon::Close => {
             open(&[(6.0, 6.0), (18.0, 18.0)]);

@@ -59,10 +59,6 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
         if theme::text_button(ui, row.right(100.0, 20.0), "open folder", true).clicked() {
             app.pick_folder(ui.ctx());
         }
-        // Only for events in the library: a drive stays as the car wrote it.
-        if super::manage::allowed(app) && theme::text_button(ui, row.right(100.0, 20.0), "manage", true).clicked() {
-            app.manage.open = true;
-        }
         let units = ["km/h", "mph"];
         let w = theme::toggles_width(ui, &units, 12.0);
         let active = if app.settings.metric { 0 } else { 1 };
@@ -134,7 +130,7 @@ fn transport(app: &mut App, ui: &mut Ui, rect: Rect) {
     let (icon, name) = if playing { (Icon::Pause, "Pause (Space)") } else { (Icon::Play, "Play (Space)") };
     btn(ui, row.left(32.0, 4.0), icon, Look::Primary, has, name, Action::TogglePlay);
     btn(ui, row.left(32.0, 4.0), Icon::ChevronRight, Look::Normal, stepping, "Step forward one frame (.)", Action::Frame(1));
-    btn(ui, row.left(32.0, 14.0), Icon::NextSeg, Look::Normal, has, "Next segment (Page Down)", Action::NextSegment);
+    btn(ui, row.left(32.0, 10.0), Icon::NextSeg, Look::Normal, has, "Next segment (Page Down)", Action::NextSegment);
     if let Some(a) = act {
         app.apply(a);
     }
@@ -146,6 +142,18 @@ fn transport(app: &mut App, ui: &mut Ui, rect: Rect) {
     if theme::text_button(ui, row.right(TRIM_BTN_W, 14.0), &label, has).clicked() {
         app.export.open = true;
     }
+    // Only for events in the library: a drive stays as the car wrote it. Both ask before anything goes.
+    if super::manage::allowed(app) {
+        for (icon, what, name) in [
+            (Icon::DropCameras, super::manage::What::Cameras, "Drop cameras: remove the ones you don't need from this event"),
+            (Icon::Trim, super::manage::What::Trim, "Trim: keep In to Out (or the mark) and remove the rest of this event"),
+        ] {
+            let gap = if what == super::manage::What::Trim { 14.0 } else { 4.0 };
+            if theme::button(ui, row.right(32.0, gap), Face::Icon(icon, 14.0), Look::Normal, true, name).on_hover_text(name).clicked() {
+                super::manage::open(app, what);
+            }
+        }
+    }
     let start = app.player.as_ref().map_or(0, |p| p.start);
     let out = trim_button(ui, row.right(TRIM_BTN_W, 4.0), "out", app.trim.end, start, has, "Set Out point (O), right-click clears");
     if out.clicked() {
@@ -154,7 +162,7 @@ fn transport(app: &mut App, ui: &mut Ui, rect: Rect) {
     if out.secondary_clicked() {
         app.trim.end = None;
     }
-    let inn = trim_button(ui, row.right(TRIM_BTN_W, 14.0), "in", app.trim.start, start, has, "Set In point (I), right-click clears");
+    let inn = trim_button(ui, row.right(TRIM_BTN_W, 4.0), "in", app.trim.start, start, has, "Set In point (I), right-click clears");
     if inn.clicked() {
         app.apply(Action::TrimIn);
     }

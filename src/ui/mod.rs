@@ -1023,15 +1023,20 @@ mod tests {
         app.open_now(&ctx, saved(&app).unwrap());
         wait(&mut app, "frames, so the files are in use", &|a| a.tiles.iter().all(|t| t.tex.is_some()));
 
-        // A drive: no manage button. The same folder as the library: there it is.
+        // A drive: nothing to manage. The same folder as the library: there it is.
         assert!(!manage::allowed(&app));
-        assert!(!painted(&ctx, &mut app).iter().any(|t| t == "manage"));
         app.settings.library_dir = Some(dir.clone());
         assert!(manage::allowed(&app));
-        assert!(painted(&ctx, &mut app).iter().any(|t| t == "manage"));
 
         // Nothing marked: trim has nothing to go by. Marked in the second segment: the first one goes.
-        app.manage.open = true;
+        manage::open(&mut app, manage::What::Cameras);
+        step(&ctx, &mut app, raw(1440.0, 960.0));
+        let text = painted(&ctx, &mut app);
+        for cam in CAMERAS {
+            assert!(text.iter().any(|t| t == cam), "{cam} in full: {text:?}");
+        }
+        assert!(text.iter().any(|t| t == "drop cameras: every camera here is ticked"), "{text:?}");
+        manage::open(&mut app, manage::What::Trim);
         step(&ctx, &mut app, raw(1440.0, 960.0));
         assert!(painted(&ctx, &mut app).iter().any(|t| t.starts_with("Set In and Out")));
         let (events, name) = (app.events.len(), app.events[saved(&app).unwrap()].name.clone());
@@ -1046,9 +1051,6 @@ mod tests {
         step(&ctx, &mut app, raw(1440.0, 960.0));
         let text = painted(&ctx, &mut app);
         assert!(text.iter().any(|t| t.starts_with("Keeps In to Out, 15:30:00 → 15:30:04") && t.ends_with("may stay.")), "{text:?}");
-        for cam in CAMERAS {
-            assert!(text.iter().any(|t| t == cam), "{cam} in full: {text:?}");
-        }
         app.trim = Trim::default();
         manage::pick(&mut app, "trim", &crate::manage::Action::Trim(3.5, 3.5));
         step(&ctx, &mut app, raw(1440.0, 960.0));
@@ -1056,30 +1058,35 @@ mod tests {
         manage::confirm(&mut app);
         assert!(app.manage.running.is_none() && app.player.is_some(), "nothing to confirm");
 
-        manage::pick(&mut app, "delete", &crate::manage::Action::Delete);
+        // Right-click on a row: a menu, and delete asks before it goes.
+        app.manage.open = false;
+        let at = eframe::egui::pos2(100.0, 300.0);
+        let i = saved(&app).unwrap();
+        manage::ask(&mut app, i, at);
         step(&ctx, &mut app, raw(1440.0, 960.0));
         let text = painted(&ctx, &mut app);
-        assert!(text.iter().any(|t| t.starts_with("delete: ") && t.ends_with("keeps 0 of 2 segments")), "{text:?}");
-        manage::confirm(&mut app);
+        assert!(text.iter().any(|t| t == "archive") && text.iter().any(|t| t == "delete") && !text.iter().any(|t| t.starts_with("Delete this")), "{text:?}");
+        manage::ask_delete(&mut app);
+        step(&ctx, &mut app, raw(1440.0, 960.0));
+        let text = painted(&ctx, &mut app);
+        assert!(text.iter().any(|t| t.starts_with("Delete this whole event?") && t.ends_with("Recycle Bin.")), "{text:?}");
+        manage::quick_run(&mut app, &crate::manage::Action::Delete);
         assert!(app.player.is_none(), "the event is let go of first");
         wait(&mut app, "the delete and the rescan", &settled);
         assert_eq!(app.events.len(), events - 1);
         assert!(!app.events.iter().any(|e| e.name == name) && !dir.join("SavedClips").join(&name).exists());
         assert!(!app.manage.open, "done without a word");
 
-        // Right-click on a row: archive goes at once, delete asks first. Neither needs the event open.
+        // Archive goes at once.
         let sentry = app.events.iter().position(|e| e.kind == Kind::Sentry).unwrap();
         let name = app.events[sentry].name.clone();
-        manage::ask(&mut app, sentry);
-        step(&ctx, &mut app, raw(1440.0, 960.0));
-        let text = painted(&ctx, &mut app);
-        assert!(text.iter().any(|t| t == "archive") && text.iter().any(|t| t == "delete") && !text.iter().any(|t| t.starts_with("Delete this")), "{text:?}");
+        manage::ask(&mut app, sentry, at);
         manage::quick_run(&mut app, &crate::manage::Action::Archive(dir.clone()));
         wait(&mut app, "the archive and the rescan", &settled);
         assert!(!app.events.iter().any(|e| e.name == name) && dir.join("Archive").join("SentryClips").join(&name).exists());
         // On a drive nothing pops up.
         app.settings.library_dir = None;
-        manage::ask(&mut app, 0);
+        manage::ask(&mut app, 0, at);
         assert!(!painted(&ctx, &mut app).iter().any(|t| t == "archive"));
 
         drop(app);

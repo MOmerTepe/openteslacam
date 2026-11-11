@@ -100,7 +100,7 @@ const TIPS: [(&str, &str); 5] = [
     ("cameras", "The top bar switches layouts. Each camera has a button to show it alone; Esc brings the others back."),
     ("mark", "Press M where it happened. The event opens there next time."),
     ("export", "Set In and Out with I and O, then export that part."),
-    ("library", "import copies a Tesla drive to this PC. manage trims, archives and deletes what's there."),
+    ("library", "import copies a Tesla drive to this PC. Right-click an event there to archive or delete it; the buttons beside Out trim it or drop cameras."),
 ];
 
 /// The tips and the shortcuts, `w` wide: the `?` sheet, and the welcome's second page.

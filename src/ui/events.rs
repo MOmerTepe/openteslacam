@@ -171,7 +171,7 @@ pub fn row_text(ev: &Event, mark: Option<f64>) -> RowText {
 enum Clicked {
     Open(usize),
     /// Right-clicked: archive or delete.
-    Menu(usize),
+    Menu(usize, eframe::egui::Pos2),
     Collapse,
     Change,
     Import,
@@ -185,7 +185,7 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
     match action.and_then(|r| r.inner) {
         // PLAN Phase 2: these start playing 10 s before their trigger.
         Some(Clicked::Open(i)) => app.open_event(ui.ctx(), i, matches!(app.events[i].kind, Kind::Saved | Kind::Sentry)),
-        Some(Clicked::Menu(i)) => super::manage::ask(app, i),
+        Some(Clicked::Menu(i, at)) => super::manage::ask(app, i, at),
         Some(Clicked::Collapse) => app.settings.library_open = false,
         Some(Clicked::Change) => app.pick_folder(ui.ctx()),
         Some(Clicked::Import) => super::import::open_for(app),
@@ -260,7 +260,7 @@ fn contents(ui: &mut Ui, app: &mut App) -> Option<Clicked> {
             for &i in &rows[range] {
                 match row(ui, &events[i], mark(&events[i]), current == Some(i), thumbs.get(&i)) {
                     (true, _) => clicked = Some(Clicked::Open(i)),
-                    (_, true) => clicked = Some(Clicked::Menu(i)),
+                    (_, true) => clicked = ui.ctx().pointer_interact_pos().map(|at| Clicked::Menu(i, at)),
                     _ => {}
                 }
             }
