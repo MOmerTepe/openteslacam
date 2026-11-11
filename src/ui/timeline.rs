@@ -53,7 +53,7 @@ pub struct View<'a> {
 pub struct LaneCache {
     bar: Rect,
     shapes: Vec<Shape>,
-    /// Hard brake / accel tags that fit; the others are ticks among `shapes`.
+    /// Hard brake / accel tags that fit, in the tick row; their lines and the others' are among `shapes`.
     tags: Vec<(Rect, String)>,
 }
 
@@ -241,12 +241,17 @@ fn build_lanes(p: &Painter, store: &Store, dur: f64, bar: Rect, [speed, pedals, 
     let xs: Vec<f32> = store.hard.iter().map(|h| x(h.t)).collect();
     let tag_w = store.hard.first().map_or(0.0, |h| p.layout_no_wrap(label(h), theme::mono(10.0), TEXT).size().x + 10.0);
     let mut tags = Vec::new();
+    // A tag sits in the tick row above everything, clear of the lanes, with a line down to its moment
+    // on the speed lane. One that found no room is the line in the lane alone.
+    let top = speed.min.y - GAP - SEGMENTS - GAP - TICKS;
     for ((h, &hx), tagged) in store.hard.iter().zip(&xs).zip(pick_tags(&store.hard, &xs, tag_w, bar.min.x)) {
-        if !tagged {
-            shapes.push(Shape::line_segment([pos2(hx, speed.min.y), pos2(hx, speed.max.y)], theme::line(TEXT)));
-            continue;
+        let from = if tagged { top } else { speed.min.y };
+        shapes.push(Shape::line_segment([pos2(hx, from), pos2(hx, speed.max.y)], theme::line(TEXT)));
+        if tagged {
+            // Touching its line, so the two read as one flag.
+            let left = if hx - tag_w < bar.min.x { hx } else { hx - tag_w };
+            tags.push((Rect::from_min_size(pos2(left, top), vec2(tag_w, TICKS - 3.0)), label(h)));
         }
-        tags.push((Rect::from_min_size(pos2(tag_left(hx, tag_w, bar.min.x), speed.min.y + 2.0), vec2(tag_w, 15.0)), label(h)));
     }
     LaneCache { bar, shapes, tags }
 }
