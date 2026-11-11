@@ -1067,6 +1067,21 @@ mod tests {
         assert!(!app.events.iter().any(|e| e.name == name) && !dir.join("SavedClips").join(&name).exists());
         assert!(!app.manage.open, "done without a word");
 
+        // Right-click on a row: archive goes at once, delete asks first. Neither needs the event open.
+        let sentry = app.events.iter().position(|e| e.kind == Kind::Sentry).unwrap();
+        let name = app.events[sentry].name.clone();
+        manage::ask(&mut app, sentry);
+        step(&ctx, &mut app, raw(1440.0, 960.0));
+        let text = painted(&ctx, &mut app);
+        assert!(text.iter().any(|t| t == "archive") && text.iter().any(|t| t == "delete") && !text.iter().any(|t| t.starts_with("Delete this")), "{text:?}");
+        manage::quick_run(&mut app, &crate::manage::Action::Archive(dir.clone()));
+        wait(&mut app, "the archive and the rescan", &settled);
+        assert!(!app.events.iter().any(|e| e.name == name) && dir.join("Archive").join("SentryClips").join(&name).exists());
+        // On a drive nothing pops up.
+        app.settings.library_dir = None;
+        manage::ask(&mut app, 0);
+        assert!(!painted(&ctx, &mut app).iter().any(|t| t == "archive"));
+
         drop(app);
         let _ = std::fs::remove_dir_all(&dir);
     }

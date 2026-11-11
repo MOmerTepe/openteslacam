@@ -170,6 +170,8 @@ pub fn row_text(ev: &Event, mark: Option<f64>) -> RowText {
 
 enum Clicked {
     Open(usize),
+    /// Right-clicked: archive or delete.
+    Menu(usize),
     Collapse,
     Change,
     Import,
@@ -183,6 +185,7 @@ pub fn panel(app: &mut App, ui: &mut Ui) {
     match action.and_then(|r| r.inner) {
         // PLAN Phase 2: these start playing 10 s before their trigger.
         Some(Clicked::Open(i)) => app.open_event(ui.ctx(), i, matches!(app.events[i].kind, Kind::Saved | Kind::Sentry)),
+        Some(Clicked::Menu(i)) => super::manage::ask(app, i),
         Some(Clicked::Collapse) => app.settings.library_open = false,
         Some(Clicked::Change) => app.pick_folder(ui.ctx()),
         Some(Clicked::Import) => super::import::open_for(app),
@@ -255,8 +258,10 @@ fn contents(ui: &mut Ui, app: &mut App) -> Option<Clicked> {
         ui.spacing_mut().item_spacing.y = 0.0;
         ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, ROW_H, rows.len(), |ui, range| {
             for &i in &rows[range] {
-                if row(ui, &events[i], mark(&events[i]), current == Some(i), thumbs.get(&i)) {
-                    clicked = Some(Clicked::Open(i));
+                match row(ui, &events[i], mark(&events[i]), current == Some(i), thumbs.get(&i)) {
+                    (true, _) => clicked = Some(Clicked::Open(i)),
+                    (_, true) => clicked = Some(Clicked::Menu(i)),
+                    _ => {}
                 }
             }
         });
@@ -273,15 +278,14 @@ fn link(ui: &mut Ui, rect: Rect, text: &str) -> eframe::egui::Response {
     r
 }
 
-/// True when clicked.
-fn row(ui: &mut Ui, ev: &Event, mark: Option<f64>, selected: bool, thumb: Option<&TextureHandle>) -> bool {
+/// (clicked to open, right-clicked). An encrypted event can't be opened, but it can be removed.
+fn row(ui: &mut Ui, ev: &Event, mark: Option<f64>, selected: bool, thumb: Option<&TextureHandle>) -> (bool, bool) {
     let t = row_text(ev, mark);
-    let sense = if ev.encrypted { Sense::hover() } else { Sense::click() };
-    let (full, r) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), sense);
+    let (full, r) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
     r.widget_info(|| WidgetInfo::labeled(Role::Button, !ev.encrypted, format!("{} {}", t.time, t.line2)));
     let r = r.on_hover_cursor(if ev.encrypted { CursorIcon::NotAllowed } else { CursorIcon::PointingHand });
     if !ui.is_rect_visible(full) {
-        return false;
+        return (false, false);
     }
     let body = full.shrink2(vec2(PAD, 0.0));
     let p = ui.painter();
@@ -318,7 +322,7 @@ fn row(ui: &mut Ui, ev: &Event, mark: Option<f64>, selected: bool, thumb: Option
     theme::badge(p, pos2(x + w + 6.0, top + 8.0), t.tag, opacity);
     theme::label(p, pos2(x, top + 27.0), &t.line2, theme::sans(12.5), dim(TEXT2), max);
     theme::label(p, pos2(x, top + 45.0), &t.meta, theme::mono(11.0), dim(TEXT3), max);
-    r.clicked()
+    (r.clicked() && !ev.encrypted, r.secondary_clicked())
 }
 
 #[cfg(test)]

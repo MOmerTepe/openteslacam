@@ -4,7 +4,7 @@
 use super::App;
 use super::export::{BTN_H, W, check, footer, row};
 use super::theme::{self, BG, Face, Icon, LINE2, Look, Row, TEXT, TEXT2, TEXT3};
-use crate::library::CAMERAS;
+use crate::library::{CAMERAS, Event};
 use crate::manage::{self, Action, Plan};
 use eframe::egui::{Color32, Context, Frame, Id, Margin, Modal, Rect, Ui, pos2, vec2};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -22,11 +22,13 @@ pub struct Dialog {
     pending: Option<(String, Result<Plan, String>)>,
     pub(super) running: Option<Receiver<Result<(), String>>>,
     error: Option<String>,
+    /// The right-clicked event of the list, and whether delete was pressed and waits for a yes.
+    quick: Option<(Event, bool)>,
 }
 
 impl Default for Dialog {
     fn default() -> Self {
-        Dialog { open: false, cams: [true; 6], pending: None, running: None, error: None }
+        Dialog { open: false, cams: [true; 6], pending: None, running: None, error: None, quick: None }
     }
 }
 
@@ -37,11 +39,78 @@ enum Step {
     Confirm,
 }
 
-/// Whether the open event may be managed: it lies in the library folder (its archive included).
-pub fn allowed(app: &App) -> bool {
+/// Whether the list shows the library folder (its archive included) and nothing else is at its files.
+fn in_library(app: &App) -> bool {
     let in_library = app.folder.as_ref().zip(app.settings.library_dir.as_ref()).is_some_and(|(f, lib)| f.starts_with(lib));
     // Not while an export or import reads or writes the same files.
-    in_library && app.current.is_some() && app.player.is_some() && app.export.running.is_none() && app.import.running.is_none()
+    in_library && app.export.running.is_none() && app.import.running.is_none()
+}
+
+/// Whether the open event may be managed.
+pub fn allowed(app: &App) -> bool {
+    in_library(app) && app.current.is_some() && app.player.is_some()
+}
+
+/// A right-click on event `i` of the list: opens the archive / delete pop-up, for library events only.
+pub fn ask(app: &mut App, i: usize) {
+    if in_library(app) && app.manage.running.is_none() && !app.manage.open {
+        app.manage.quick = Some((app.events[i].clone(), false));
+    }
+}
+
+/// Archives or deletes the right-clicked event. A refusal shows in the manage dialog's error view.
+pub(super) fn quick_run(app: &mut App, action: &Action) {
+    let Some((ev, _)) = app.manage.quick.take() else { return };
+    // Neither action looks at segment times.
+    match manage::plan(&ev, &[], action) {
+        Ok(plan) => {
+            app.manage.pending = Some((String::new(), Ok(plan)));
+            confirm(app);
+        }
+        Err(e) => (app.manage.error, app.manage.open) = (Some(e), true),
+    }
+}
+
+fn quick(ui: &mut Ui, app: &mut App) -> Step {
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let Some((ev, sure)) = &app.manage.quick else { return Step::Close };
+    let mut step = Step::None;
+    let head = row(ui, BTN_H);
+    theme::spaced(ui.painter(), head.left_center(), "EVENT", theme::medium(11.0), TEXT3, 1.54, W - 40.0);
+    if theme::button(ui, head.with_min_x(head.max.x - BTN_H), Face::Icon(Icon::Close, 14.0), Look::Bare, true, "Close").clicked() {
+        step = Step::Close;
+    }
+    ui.add_space(18.0);
+    let r = row(ui, 22.0);
+    theme::label(ui.painter(), r.left_center(), &super::events::title(ev), theme::medium(15.0), TEXT, W);
+    ui.add_space(18.0);
+    if *sure {
+        let size = mb(manage::freed(&manage::plan(ev, &[], &Action::Delete).unwrap_or_default()));
+        let g = ui.painter().layout(format!("Delete this whole event? {size} goes to the Recycle Bin."), theme::sans(12.5), TEXT, W);
+        let r = row(ui, g.size().y);
+        ui.painter().galley(r.min, g, TEXT);
+        ui.add_space(18.0);
+        let mut r = footer(ui);
+        if theme::button(ui, r.right(BTN_W, 8.0), Face::Text("delete"), Look::Primary, true, "delete").clicked() {
+            step = Step::Pick("delete", Action::Delete);
+        }
+        if theme::text_button(ui, r.right(BTN_W, 8.0), "cancel", true).clicked() {
+            step = Step::Close;
+        }
+        return step;
+    }
+    // Why it can't be archived stands where the description would.
+    let archive = app.settings.library_dir.clone().map(|lib| (manage::plan(ev, &[], &Action::Archive(lib.clone())).err(), lib));
+    let about = archive.as_ref().and_then(|a| a.0.clone()).unwrap_or_else(|| "Moves the event out of the list, into the library's Archive folder.".to_owned());
+    if choice(ui, "archive", &about, matches!(archive, Some((None, _))))
+        && let Some((_, lib)) = archive
+    {
+        step = Step::Pick("archive", Action::Archive(lib));
+    }
+    if choice(ui, "delete", "Removes the whole event. Asks first.", true) {
+        step = Step::Confirm;
+    }
+    step
 }
 
 /// The range trimming keeps, in seconds from the event start, and whether it is In and Out. Those
@@ -68,11 +137,23 @@ pub fn modal(app: &mut App, ctx: &Context) {
             }
         }
     }
+    let frame = Frame::NONE.fill(BG).stroke(theme::line(LINE2)).inner_margin(Margin::same(22));
+    let backdrop = Color32::from_rgba_unmultiplied_const(10, 10, 9, 184);
+    if app.manage.quick.is_some() {
+        let r = Modal::new(Id::unique("manage-quick")).frame(frame).backdrop_color(backdrop).show(ctx, |ui| quick(ui, app));
+        match r.inner {
+            Step::Close => app.manage.quick = None,
+            Step::None if r.should_close() => app.manage.quick = None,
+            Step::Pick(_, action) => quick_run(app, &action),
+            // Delete was pressed: ask.
+            Step::Confirm => app.manage.quick.iter_mut().for_each(|q| q.1 = true),
+            Step::None => {}
+        }
+        return;
+    }
     if !app.manage.open {
         return;
     }
-    let frame = Frame::NONE.fill(BG).stroke(theme::line(LINE2)).inner_margin(Margin::same(22));
-    let backdrop = Color32::from_rgba_unmultiplied_const(10, 10, 9, 184);
     let r = Modal::new(Id::unique("manage")).frame(frame).backdrop_color(backdrop).show(ctx, |ui| contents(ui, app));
     let busy = app.manage.running.is_some();
     match r.inner {
