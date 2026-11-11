@@ -44,10 +44,13 @@ pub fn allowed(app: &App) -> bool {
     in_library && app.current.is_some() && app.player.is_some() && app.export.running.is_none() && app.import.running.is_none()
 }
 
-/// The range trimming keeps: the mark, else In and Out, in seconds from the event start.
-fn range(app: &App) -> Option<(f64, f64)> {
+/// The range trimming keeps, in seconds from the event start, and whether it is In and Out. Those
+/// win over the mark: they are the selection on screen, and a mark set earlier at another moment once
+/// trimmed away footage that In and Out covered.
+pub(super) fn range(app: &App) -> Option<(f64, f64, bool)> {
     let p = app.player.as_ref()?;
-    app.mark().map(|(a, b)| (a - p.start as f64, b - p.start as f64)).or_else(|| app.trim.is_set().then(|| app.trim.range(p.duration())))
+    let (a, b) = app.trim.range(p.duration());
+    if app.trim.is_set() { Some((a, b, true)) } else { app.mark().map(|(a, b)| (a - p.start as f64, b - p.start as f64, false)) }
 }
 
 pub fn modal(app: &mut App, ctx: &Context) {
@@ -141,10 +144,18 @@ fn contents(ui: &mut Ui, app: &mut App) -> Step {
     theme::label(ui.painter(), r.left_center(), &super::events::title(ev), theme::medium(15.0), TEXT, W);
     ui.add_space(18.0);
 
+    // The exact range, before anything is picked: what trim goes by must never be a guess.
     let trim = range(app);
-    let about = if trim.is_some() { "Keeps the minutes around the mark (or In–Out) and removes the rest." } else { "Set a mark, or In and Out, to say which part to keep." };
-    if choice(ui, "trim", about, trim.is_some()) {
-        let (a, b) = trim.unwrap_or_default();
+    let start = app.player.as_ref().map_or(0.0, |p| p.start as f64);
+    let clock = |t: f64| super::events::hms((start + t) as i64);
+    let about = match trim {
+        Some((a, b, true)) => format!("Keeps In to Out, {} → {}, in whole segments, and removes the rest.", clock(a), clock(b)),
+        Some((a, b, false)) if b > a => format!("Keeps the mark, {} → {}, in whole segments, and removes the rest.", clock(a), clock(b)),
+        Some((a, ..)) => format!("Keeps the segments around the mark at {} and removes the rest.", clock(a)),
+        None => "Set In and Out, or a mark, to say which part to keep.".to_owned(),
+    };
+    if choice(ui, "trim", &about, trim.is_some()) {
+        let (a, b, _) = trim.unwrap_or_default();
         step = Step::Pick("trim", Action::Trim(a, b));
     }
     if choice(ui, "drop cameras", "Removes the cameras that aren't ticked below.", true) {

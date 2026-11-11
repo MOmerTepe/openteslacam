@@ -192,6 +192,9 @@ mod tests {
         assert_eq!(p.kept, 1, "190..220 s lies in segment 4 alone");
         assert_eq!(plan(&big, &long, &Action::Trim(185.0, 185.0)).unwrap().kept, 2, "the lead-in reaches back into segment 3");
         assert!(plan(&big, &long, &Action::Trim(9000.0, 9001.0)).is_err(), "nothing there");
+        // The last 30 s of the second to last segment through the end: both stay, the eight before go.
+        let p = plan(&big, &long, &Action::Trim(510.0, 600.0)).unwrap();
+        assert_eq!((p.kept, p.remove.len()), (2, 8 * files(&ev) / 2));
         assert!(plan(&ev, &segs, &Action::Trim(0.0, 4.0)).is_err(), "nothing to drop");
 
         // For real: a range past the short fixture's lead-in drops its first segment.

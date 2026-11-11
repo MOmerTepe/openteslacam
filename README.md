@@ -20,6 +20,15 @@ decrypt or play those clips.** They aren't real MP4 files, and only the car that
 To use your footage here, turn encryption off in the car: **Controls → Safety → Encrypt Dashcam Recordings**.
 Clips recorded after that are normal MP4s. Clips already encrypted stay unreadable.
 
+## What's new in 2.2.1 (urgent fix)
+
+- **Trim removed footage inside In and Out.** In 2.2.0, `manage` → `trim` went by the event's mark even when In
+  and Out were set, so a mark placed earlier at another moment could take away segments the In–Out selection
+  covered. Trim now goes by In and Out whenever they are set, and by the mark only without them. The dialog
+  also names the exact times it will keep before you pick anything.
+- **If 2.2.0 trimmed too much:** nothing is lost. Trim moves clips to the Windows Recycle Bin. Open the Recycle
+  Bin, select the clips of that event (they are named by date and time) and choose Restore.
+
 ## What's new in 2.2
 
 - **Update from inside the app:** when a newer version is out, a dialog shows what's in it, with `update now`
@@ -103,7 +112,7 @@ macOS and Linux aren't packaged. The code isn't Windows-specific, but those buil
 
 ## Install
 
-Run `OpenTeslaCam-Setup-2.2.0.exe`. It installs for your user only and doesn't need administrator rights.
+Run `OpenTeslaCam-Setup-2.2.1.exe`. It installs for your user only and doesn't need administrator rights.
 Windows SmartScreen may warn you because the installer isn't code-signed yet.
 
 **Updating:** from 2.2 on, the app offers a newer version when it starts and installs it itself. Versions 2.0.1
@@ -129,7 +138,7 @@ powershell -ExecutionPolicy Bypass -File installer/detect-deps.ps1
 To uninstall, use Windows' installed apps. It removes only what setup installed, and leaves your clips,
 settings, saved layouts and Git.
 
-Unattended install: `OpenTeslaCam-Setup-2.2.0.exe --silent --dir <folder> [--desktop] [--tesla]`. Without
+Unattended install: `OpenTeslaCam-Setup-2.2.1.exe --silent --dir <folder> [--desktop] [--tesla]`. Without
 `--dir`, it updates the installed app where it is. Unattended uninstall: `uninstall.exe --uninstall --silent`.
 
 ## Usage

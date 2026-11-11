@@ -1033,11 +1033,20 @@ mod tests {
         // Nothing marked: trim has nothing to go by. Marked in the second segment: the first one goes.
         app.manage.open = true;
         step(&ctx, &mut app, raw(1440.0, 960.0));
-        assert!(painted(&ctx, &mut app).iter().any(|t| t.starts_with("Set a mark")));
+        assert!(painted(&ctx, &mut app).iter().any(|t| t.starts_with("Set In and Out")));
         let (events, name) = (app.events.len(), app.events[saved(&app).unwrap()].name.clone());
         let start = app.player.as_ref().unwrap().start as f64;
         // The fixture's segments are 2 s, well inside trim's lead-in, so nothing can be dropped.
         app.settings.toggle_mark(&name, (start + 3.5, start + 3.5));
+        assert_eq!(manage::range(&app), Some((3.5, 3.5, false)));
+        // In and Out are the selection on screen: they decide, not a mark set somewhere else (2.2.0
+        // went by the mark and removed footage inside In and Out).
+        app.trim = Trim { start: Some(0.5), end: None };
+        assert_eq!(manage::range(&app), Some((0.5, 4.0, true)));
+        step(&ctx, &mut app, raw(1440.0, 960.0));
+        let text = painted(&ctx, &mut app);
+        assert!(text.iter().any(|t| t.starts_with("Keeps In to Out, 15:30:00 → 15:30:04")), "{text:?}");
+        app.trim = Trim::default();
         manage::pick(&mut app, "trim", &crate::manage::Action::Trim(3.5, 3.5));
         step(&ctx, &mut app, raw(1440.0, 960.0));
         assert!(painted(&ctx, &mut app).iter().any(|t| t == "trim: the range already covers every segment"));
