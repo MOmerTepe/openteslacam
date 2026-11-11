@@ -65,6 +65,8 @@ pub struct Settings {
     pub import_auto: bool,
     /// The welcome has been shown (or skipped); it never comes back by itself.
     pub onboarded: bool,
+    /// The back camera shows `grid::back_crop` instead of the whole picture.
+    pub back_crop: bool,
 }
 
 impl Default for Settings {
@@ -87,6 +89,7 @@ impl Default for Settings {
             import_clear: false,
             import_auto: false,
             onboarded: false,
+            back_crop: false,
         }
     }
 }
@@ -121,6 +124,7 @@ impl Settings {
             "import_clear": self.import_clear,
             "import_auto": self.import_auto,
             "onboarded": self.onboarded,
+            "back_crop": self.back_crop,
             "marks": self.marks.iter().map(|(k, &(a, b))| (k.clone(), json!([a, b]))).collect::<serde_json::Map<_, _>>(),
         })
         .to_string()
@@ -160,6 +164,7 @@ impl Settings {
             import_clear: v["import_clear"].as_bool().unwrap_or(d.import_clear),
             import_auto: v["import_auto"].as_bool().unwrap_or(d.import_auto),
             onboarded: v["onboarded"].as_bool().unwrap_or(d.onboarded),
+            back_crop: v["back_crop"].as_bool().unwrap_or(d.back_crop),
         }
     }
 }
@@ -190,6 +195,7 @@ mod tests {
             import_clear: true,
             import_auto: true,
             onboarded: true,
+            back_crop: true,
         };
         assert_eq!(Settings::from_json(&s.to_json()), s);
         assert_eq!(Settings::from_json(&Settings::default().to_json()), Settings::default());

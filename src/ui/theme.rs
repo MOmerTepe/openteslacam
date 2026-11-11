@@ -282,6 +282,7 @@ pub enum Icon {
     Pause,
     Lock,
     Focus,
+    Crop,
     Close,
 }
 
@@ -328,6 +329,10 @@ pub fn paint_icon(p: &Painter, center: Pos2, icon: Icon, size: f32, color: Color
             open(&[(20.0, 9.0), (20.0, 4.0), (15.0, 4.0)]);
             open(&[(4.0, 15.0), (4.0, 20.0), (9.0, 20.0)]);
             open(&[(20.0, 15.0), (20.0, 20.0), (15.0, 20.0)]);
+        }
+        Icon::Crop => {
+            open(&[(7.0, 3.0), (7.0, 17.0), (21.0, 17.0)]);
+            open(&[(3.0, 7.0), (17.0, 7.0), (17.0, 21.0)]);
         }
         Icon::Close => {
             open(&[(6.0, 6.0), (18.0, 18.0)]);

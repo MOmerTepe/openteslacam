@@ -6,8 +6,9 @@ use super::theme::{self, BG, Face, HOVER, Icon, LINE, Look, TEXT, TEXT2, TEXT3, 
 use crate::decode::FrameOut;
 use crate::library::CAMERAS;
 use eframe::egui::{
-    Color32, Context, CursorIcon, Id, Rect, Role, Sense, StrokeKind, TextureHandle, TextureOptions, Ui, Vec2, WidgetInfo, pos2, vec2,
+    Color32, Context, CursorIcon, Id, Rect, Role, Sense, Shape, StrokeKind, TextureHandle, TextureOptions, Ui, Vec2, WidgetInfo, pos2, vec2,
 };
+use eframe::egui::epaint::{Mesh, Vertex};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
@@ -226,6 +227,20 @@ pub fn fit(outer: Rect, size: Vec2) -> Rect {
     Rect::from_center_size(outer.center(), size * scale)
 }
 
+/// The back camera's cropped view: where its point (`u`, `v`) reads the source picture, both 0..1.
+/// `aspect` is height / width. Flattens the fisheye to a 110° wide view, which leaves the trunk lid,
+/// the plate light cover and the bumper outside.
+// shortcut: the lens is taken as equidistant and the three numbers were fitted by eye to one HW4 frame; measure per model if another car looks bent or still shows its bumper.
+pub fn back_crop(u: f32, v: f32, aspect: f32) -> (f32, f32) {
+    const OUT_HALF: f32 = 55.0;
+    const SRC_HALF: f32 = 85.0;
+    const CENTER_V: f32 = 0.48;
+    let (x, y) = (2.0 * u - 1.0, (2.0 * v - 1.0) * aspect);
+    let r = x.hypot(y).max(1e-6);
+    let k = (r * OUT_HALF.to_radians().tan()).atan() / SRC_HALF.to_radians() / r;
+    (0.5 + x * k / 2.0, CENTER_V + y * k / (2.0 * aspect))
+}
+
 /// The custom toolbar when it applies, then the tiles. `panel` is the whole free rect.
 pub fn show(ui: &mut Ui, panel: Rect, s: &mut Settings, ed: &mut Editor, tiles: &[Tile; 6], focus: &mut Option<usize>) {
     let custom = s.layout == Layout::Custom;
@@ -240,7 +255,7 @@ pub fn show(ui: &mut Ui, panel: Rect, s: &mut Settings, ed: &mut Editor, tiles: 
     for (cam, cell) in cells(&placed(s), &s.custom_z, *focus) {
         let rect = cell_rect(area, cell);
         let dragged = ed.drag.is_some_and(|d| d.cam == cam);
-        if tile(ui, rect, cam, &tiles[cam], editing.then_some(dragged)) {
+        if tile(ui, rect, cam, &tiles[cam], editing.then_some(dragged), &mut s.back_crop) {
             *focus = if *focus == Some(cam) { None } else { Some(cam) };
         }
         if editing {
@@ -262,8 +277,9 @@ fn canvas(ui: &Ui, area: Rect) {
     p.rect_stroke(area, 0.0, theme::line(LINE), StrokeKind::Inside);
 }
 
-/// `edit` is `Some(being dragged)` in edit mode. True when focus was asked for.
-fn tile(ui: &mut Ui, rect: Rect, cam: usize, t: &Tile, edit: Option<bool>) -> bool {
+/// `edit` is `Some(being dragged)` in edit mode. `crop` applies to the back camera only. True when focus was asked for.
+fn tile(ui: &mut Ui, rect: Rect, cam: usize, t: &Tile, edit: Option<bool>, crop: &mut bool) -> bool {
+    let back = cam == 1;
     let (caption, video) = rect.split_top_bottom_at_y(rect.min.y + CAPTION);
     let p = ui.painter_at(rect);
     // Opaque: custom tiles can overlap.
@@ -281,13 +297,35 @@ fn tile(ui: &mut Ui, rect: Rect, cam: usize, t: &Tile, edit: Option<bool>) -> bo
         }
         text_x += 12.0;
     }
-    theme::spaced(&p, pos2(text_x, caption.center().y), name, theme::medium(10.0), TEXT2, 1.4, caption.max.x - text_x - 32.0);
+    theme::spaced(&p, pos2(text_x, caption.center().y), name, theme::medium(10.0), TEXT2, 1.4, caption.max.x - text_x - if back { 56.0 } else { 32.0 });
 
     p.rect_filled(video, 0.0, VIDEO_BG);
     match (&t.tex, &t.err) {
         (Some(tex), _) => {
-            let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-            p.image(tex.id(), fit(video, tex.size_vec2()), uv, Color32::WHITE);
+            let (r, size) = (fit(video, tex.size_vec2()), tex.size_vec2());
+            if back && *crop && size.x > 0.0 {
+                // A grid of quads bends the picture without a shader.
+                const N: u32 = 24;
+                let mut mesh = Mesh::with_texture(tex.id());
+                for j in 0..=N {
+                    for i in 0..=N {
+                        let (u, v) = (i as f32 / N as f32, j as f32 / N as f32);
+                        let (su, sv) = back_crop(u, v, size.y / size.x);
+                        mesh.vertices.push(Vertex { pos: r.min + r.size() * vec2(u, v), uv: pos2(su, sv), color: Color32::WHITE });
+                    }
+                }
+                for j in 0..N {
+                    for i in 0..N {
+                        let a = j * (N + 1) + i;
+                        mesh.add_triangle(a, a + 1, a + N + 1);
+                        mesh.add_triangle(a + 1, a + N + 2, a + N + 1);
+                    }
+                }
+                p.add(Shape::mesh(mesh));
+            } else {
+                let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                p.image(tex.id(), r, uv, Color32::WHITE);
+            }
         }
         (None, Some(e)) => {
             theme::label(&p, pos2(video.min.x + 8.0, video.center().y), e, theme::mono(10.5), TEXT3, video.width() - 16.0);
@@ -305,6 +343,16 @@ fn tile(ui: &mut Ui, rect: Rect, cam: usize, t: &Tile, edit: Option<bool>) -> bo
     }
     // The whole tile, caption included; the focus button registers later and keeps its own clicks.
     let double = ui.interact(rect, Id::unique(("tile", cam)), Sense::click()).double_clicked();
+    if back {
+        let b = Rect::from_min_max(pos2(caption.max.x - 48.0, caption.min.y), pos2(caption.max.x - 24.0, caption.max.y));
+        let hint = if *crop { "Show the whole back camera picture" } else { "Crop the back camera to the road and straighten it" };
+        if caption_button(ui, b, cam, Icon::Crop, 11.0, hint) {
+            *crop = !*crop;
+        }
+        if *crop {
+            ui.painter().hline(b.shrink(6.0).x_range(), b.max.y - 3.5, theme::line(TEXT));
+        }
+    }
     caption_button(ui, caption.with_min_x(caption.max.x - 24.0), cam, Icon::Focus, 11.0, &format!("Focus {name} (double-click)")) || double
 }
 
@@ -341,7 +389,7 @@ fn handles(ui: &mut Ui, area: Rect, rect: Rect, cam: usize, s: &mut Settings, ed
 
 /// A stable id: raising a tile mustn't turn a press into a different button.
 fn caption_button(ui: &mut Ui, rect: Rect, cam: usize, icon: Icon, size: f32, name: &str) -> bool {
-    let r = ui.interact(rect, Id::unique(("tile-button", cam)), Sense::click()).on_hover_cursor(CursorIcon::PointingHand);
+    let r = ui.interact(rect, Id::unique(("tile-button", cam, icon as u8)), Sense::click()).on_hover_cursor(CursorIcon::PointingHand);
     r.widget_info(|| WidgetInfo::labeled(Role::Button, true, name));
     let p = ui.painter();
     p.vline(rect.min.x + 0.5, rect.y_range(), theme::line(LINE));
@@ -489,6 +537,34 @@ mod tests {
         let f = fit(rect(400.0, 900.0), vec2(1280.0, 960.0));
         assert_eq!((f.width(), f.height()), (400.0, 300.0));
         assert_eq!(fit(rect(40.0, 30.0), vec2(0.0, 0.0)), rect(40.0, 30.0));
+    }
+
+    #[test]
+    fn back_crop_reads_inside_the_picture_and_keeps_the_middle() {
+        let a = 938.0 / 1448.0;
+        let (cu, cv) = back_crop(0.5, 0.5, a);
+        assert!((cu - 0.5).abs() < 1e-4 && (cv - 0.48).abs() < 1e-4);
+        for (u, v) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (0.0, 0.5), (0.5, 1.0)] {
+            let (su, sv) = back_crop(u, v, a);
+            assert!((0.05..=0.95).contains(&su) && (0.05..=0.95).contains(&sv), "{u},{v} -> {su},{sv}");
+        }
+        // Mirror images left and right, and the edge reads further out than halfway to it.
+        let ((l, _), (r, _), (h, _)) = (back_crop(0.0, 0.3, a), back_crop(1.0, 0.3, a), back_crop(0.75, 0.3, a));
+        assert!((l + r - 1.0).abs() < 1e-4 && r > h && h > 0.5);
+    }
+
+    #[test]
+    fn the_crop_button_is_on_the_back_tile_only() {
+        let mut r = Rig::new(false);
+        let at = |r: &Rig, cam: usize| r.rect_of(cam).right_top() + vec2(-36.0, 12.0);
+        let p = at(&r, 1);
+        r.click(p);
+        assert!(r.s.back_crop && r.focus.is_none());
+        r.click(p);
+        assert!(!r.s.back_crop);
+        let p = at(&r, 0);
+        r.click(p);
+        assert!(!r.s.back_crop);
     }
 
     #[test]

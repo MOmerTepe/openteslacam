@@ -155,7 +155,7 @@ pub fn start(app: &mut App) {
     let d = &app.export;
     let mode = if d.composite {
         let (_, width, height, bps) = RESOLUTIONS[d.res];
-        Mode::Composite(Composite { width, height, bps, hud: d.hud, map: d.map, metric: app.settings.metric, cells: grid::current_cells(&app.settings, app.focus), gpu: d.gpu })
+        Mode::Composite(Composite { width, height, bps, hud: d.hud, map: d.map, metric: app.settings.metric, cells: grid::current_cells(&app.settings, app.focus), back_crop: app.settings.back_crop, gpu: d.gpu })
     } else {
         Mode::Lossless(d.cams)
     };

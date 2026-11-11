@@ -97,6 +97,8 @@ pub struct Composite {
     pub metric: bool,
     /// (camera, grid cell), bottom first.
     pub cells: Vec<(usize, grid::Cell)>,
+    /// The back camera as `grid::back_crop` shows it.
+    pub back_crop: bool,
     /// Encode on the GPU when it can; the CPU otherwise.
     pub gpu: bool,
 }
@@ -638,6 +640,8 @@ fn places(w: usize, h: usize, band_h: f32, zoom: f32, cells: &[(usize, grid::Cel
 /// One camera following increasing times: decodes forward, restarts at each new segment.
 struct Stream {
     cam: usize,
+    /// Draw through `grid::back_crop`.
+    crop: bool,
     files: Vec<Option<PathBuf>>,
     cur: Option<(usize, Result<Loaded, String>)>,
     dec: Option<CamDecoder>,
@@ -655,9 +659,9 @@ struct Stream {
 }
 
 impl Stream {
-    fn new(cam: usize, event: &Event) -> Stream {
+    fn new(cam: usize, event: &Event, crop: bool) -> Stream {
         let files = event.segments.iter().map(|s| s.files[cam].clone()).collect();
-        Stream { cam, files, cur: None, dec: None, next: 0, pending: Vec::new(), shown: None, rgba: Vec::new(), size: (0, 0), fitted: Bitmap::default(), note: None }
+        Stream { cam, crop, files, cur: None, dec: None, next: 0, pending: Vec::new(), shown: None, rgba: Vec::new(), size: (0, 0), fitted: Bitmap::default(), note: None }
     }
 
     /// Brings `rgba` to the latest picture with pts <= `local` seconds into `seg`.
@@ -730,6 +734,20 @@ impl Stream {
             self.fitted = Bitmap::default();
             return;
         }
+        if self.crop {
+            // shortcut: nearest sample, so a tile much smaller than the clip shimmers a little; average the footprint if it shows.
+            let f = &mut self.fitted;
+            f.px.clear();
+            (f.w, f.h) = (dw, dh);
+            for y in 0..dh {
+                for x in 0..dw {
+                    let (u, v) = grid::back_crop((x as f32 + 0.5) / dw as f32, (y as f32 + 0.5) / dh as f32, sh as f32 / sw as f32);
+                    let at = (((v * sh as f32) as usize).min(sh - 1) * sw + ((u * sw as f32) as usize).min(sw - 1)) * 4;
+                    f.px.push([self.rgba[at], self.rgba[at + 1], self.rgba[at + 2], 255]);
+                }
+            }
+            return;
+        }
         scale(&self.rgba, (sw, sh), &mut self.fitted, (dw, dh));
     }
 }
@@ -768,7 +786,7 @@ fn composite(job: &Job, c: &Composite, store: &Store, parts: &mut Parts, notes: 
             Bitmap { w: vw, h: vh, px: vec![theme::VIDEO_BG.to_array(); vw * vh] }
         })
         .collect();
-    let mut streams: Vec<Stream> = places.iter().map(|t| Stream::new(t.cam, &job.event)).collect();
+    let mut streams: Vec<Stream> = places.iter().map(|t| Stream::new(t.cam, &job.event, t.cam == 1 && c.back_crop)).collect();
 
     let (mut enc, note) = Encoder::new(c.gpu, w, h, c.bps)?;
     notes.extend(note);
@@ -1200,7 +1218,7 @@ mod tests {
             let s = &clock.segs[seg];
             let mut pts: Vec<u64> = mp4::read_track(ev.segments[seg].files[0].as_ref().unwrap()).unwrap().samples.iter().map(|x| x.pts).collect();
             pts.sort();
-            let mut st = Stream::new(0, &ev);
+            let mut st = Stream::new(0, &ev, false);
             for (k, f) in s.frames.iter().enumerate() {
                 let (at, local) = clock.locate(s.start + f).unwrap();
                 st.advance(at, local);
@@ -1326,7 +1344,7 @@ mod tests {
 
     fn composite_mode(width: u32, height: u32, hud: bool) -> Mode {
         let cells = (0..6).map(|c| (c, [(c % 3) as f32 * 4.0, (c / 3) as f32 * 4.0, 4.0, 4.0])).collect();
-        Mode::Composite(Composite { width, height, bps: 4_000_000, hud, map: hud, metric: true, cells, gpu: false })
+        Mode::Composite(Composite { width, height, bps: 4_000_000, hud, map: hud, metric: true, cells, back_crop: true, gpu: false })
     }
 
     /// (frames decoded, brightest pixel in the picture's top part, brightest in the bottom 5 %).
