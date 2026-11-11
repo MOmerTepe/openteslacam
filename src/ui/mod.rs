@@ -34,8 +34,10 @@ use std::time::Instant;
 
 pub fn run(folder: Option<PathBuf>) -> Result<(), String> {
     // shortcut: rows don't wrap like the mockup's flex-wrap, the minimum width keeps them from colliding; wrap if people want smaller windows.
+    // Without this eframe shows its own icon, which has a margin and so looks small on the taskbar.
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../../assets/icon.png")).map_err(|e| e.to_string())?;
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_app_id("openteslacam").with_inner_size([1440.0, 960.0]).with_min_inner_size([1280.0, 720.0]),
+        viewport: egui::ViewportBuilder::default().with_app_id("openteslacam").with_inner_size([1440.0, 960.0]).with_min_inner_size([1280.0, 720.0]).with_icon(icon),
         ..Default::default()
     };
     eframe::run_native(

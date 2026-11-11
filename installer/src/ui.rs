@@ -28,8 +28,9 @@ pub fn run(mode: Mode) -> Result<(), String> {
         Mode::Install(_) => "OpenTeslaCam Setup",
         Mode::Uninstall(_) => "Uninstall OpenTeslaCam",
     };
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../../assets/icon.png")).map_err(|e| e.to_string())?;
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_app_id("openteslacam-setup").with_inner_size([WIDTH, HEIGHT]).with_resizable(false),
+        viewport: egui::ViewportBuilder::default().with_app_id("openteslacam-setup").with_inner_size([WIDTH, HEIGHT]).with_resizable(false).with_icon(icon),
         ..Default::default()
     };
     eframe::run_native(
