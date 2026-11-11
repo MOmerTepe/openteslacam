@@ -20,4 +20,8 @@ def draw(n):
 
 sizes = [16, 20, 24, 32, 40, 48, 64, 256]
 draw(256).save("assets/icon.png")
-draw(256).save("assets/icon.ico", sizes=[(s, s) for s in sizes], append_images=[draw(s) for s in sizes[:-1]])
+# GitHub's social preview (repo Settings → Social preview): the icon centered on its own background.
+social = Image.new("RGBA", (1280, 640), LIGHT)
+social.paste(draw(512), (384, 64))
+social.save("assets/social-preview.png")
+draw(256).save("assets/icon.ico",sizes=[(s, s) for s in sizes], append_images=[draw(s) for s in sizes[:-1]])
