@@ -20,6 +20,14 @@ HW4 car, so some things are only known to be right there; the release notes say 
 code before you trust it with footage you can't replace. `CLAUDE.md` is the brief the assistant works from, and
 it doubles as the architecture notes.
 
+## Not related to Sentry-Six
+
+[Sentry Studio](https://github.com/Sentry-Six/Sentry-Six), from the Sentry-Six project, is another Tesla
+dashcam viewer, also written in Rust. I didn't know it existed when I started this, and I might not have
+started if I had. No code in this repo comes from it: the two were written separately and share nothing but
+the subject. I keep working on this one as a hobby, adding what I want and tuning it for how I use it. If it
+doesn't fit you, Sentry Studio is worth a look: it also runs on macOS and Linux.
+
 ## What it does
 
 - Plays six cameras on one clock, in the Grid, Center or Driving layout or one you arrange yourself.
