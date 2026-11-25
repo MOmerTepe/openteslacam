@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to View Tesla Dashcam and Sentry Mode Footage on a Mac · HexCam</title>
+<meta name="description" content="Where a Tesla keeps its dashcam and Sentry Mode clips on the USB drive, why they are awkward to watch in QuickTime, and how to play all six cameras together on a Mac.">
+<link rel="canonical" href="https://hexcam.app/tesla-dashcam-mac.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="HexCam">
+<meta property="og:title" content="How to view Tesla dashcam and Sentry Mode footage on a Mac">
+<meta property="og:description" content="What is on the drive, and how to play every camera together.">
+<meta property="og:image" content="https://hexcam.app/screenshot-grid.jpg">
+<meta property="og:url" content="https://hexcam.app/tesla-dashcam-mac.html">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#08090c">
+<link rel="icon" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="page">
+<div class="backdrop" aria-hidden="true"></div>
+
+<a class="top" href="./">
+  <img src="favicon.png" alt="" width="26" height="26">
+  <span>HexCam</span>
+</a>
+
+  <main class="prose">
+    <h1>Tesla dashcam footage on a Mac</h1>
+    <p class="date">How to view dashcam and Sentry Mode clips from the car's USB drive.</p>
+
+    <p>A Tesla records its cameras to the USB drive in the glovebox. Plug that drive into a Mac and the clips open in QuickTime, but one camera and one minute at a time. This page says what is on the drive and how to watch it as one recording.</p>
+
+    <h2>What is on the drive</h2>
+    <p>The drive has a folder named <code>TeslaCam</code> with three folders inside:</p>
+    <ul>
+      <li><b>SavedClips.</b> Dashcam footage you saved, by pressing the dashcam icon or sounding the horn.</li>
+      <li><b>SentryClips.</b> What Sentry Mode recorded while the car was parked.</li>
+      <li><b>RecentClips.</b> The last hour or so of driving, overwritten as the car goes on.</li>
+    </ul>
+    <p>Every minute is a separate MP4 file for each camera, named with the time and the camera: <code>2026-11-20_14-33-00-front.mp4</code>. Newer cars record six cameras (front, back, the two side repeaters and the two door pillars); older ones record four. A ten-minute event on a newer car is sixty files.</p>
+
+    <h2>Why QuickTime is not enough</h2>
+    <ul>
+      <li>It plays one file, so you see one camera and lose the others.</li>
+      <li>Each file is a minute long, so anything that crosses a minute is split in two.</li>
+      <li>The speed, steering, braking and position the car writes into the video are not shown at all.</li>
+    </ul>
+
+    <h2>Watching it in HexCam</h2>
+    <img src="screenshot-grid.jpg" width="2400" height="1400" loading="lazy" alt="HexCam playing a Tesla dashcam event on a Mac: six cameras in a grid, a list of events, a map of the route and the car's speed along the timeline.">
+    <ol>
+      <li>Plug the car's USB drive into the Mac.</li>
+      <li>Open the drive, or its <code>TeslaCam</code> folder, in HexCam. Saved, Sentry and recent clips appear as a list of events.</li>
+      <li>Pick an event. All its cameras play together on one timeline, and the minutes run on as one recording.</li>
+    </ol>
+    <p>From there you can:</p>
+    <ul>
+      <li><b>Arrange the cameras.</b> A grid, one camera large with the rest around it, or a layout of your own.</li>
+      <li><b>See the car's data.</b> Speed, steering, brake, blinkers and Autopilot state along the timeline, and the route on a map, on clips that carry this data.</li>
+      <li><b>Import to the Mac.</b> Copy the drive into a library folder, checked file by file, so the drive can go back in the car.</li>
+      <li><b>Trim and export.</b> Mark a stretch and save it as the original video, or as one video with every camera in it.</li>
+    </ul>
+    <p>Playing, layouts, importing and exporting the original video are free. The car's data is a one-time purchase in the app.</p>
+
+    <h2>What you need</h2>
+    <p>A Mac with Apple silicon and macOS 26 or later. HexCam is a native Mac app: the Mac's own video hardware decodes the six pictures, and the footage never leaves the Mac. See the <a href="privacy.html">privacy page</a>.</p>
+
+    <h2>When</h2>
+    <p>HexCam is coming soon to the Mac App Store. <a href="./">See it at hexcam.app</a>.</p>
+  </main>
+
+<footer>
+  <a href="privacy.html">Privacy</a>
+  <span>HexCam is an independent app, not made or endorsed by Tesla, Inc.</span>
+</footer>
+
+</body>
+</html>

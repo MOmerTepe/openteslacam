@@ -110,6 +110,7 @@ p.line { display: none; font-size: clamp(24px, 3.4vw, 40px); letter-spacing: -0.
 }
 .end img { filter: drop-shadow(0 16px 36px rgba(0, 0, 0, 0.5)); margin-bottom: 18px; }
 .soon { margin: 0; font-size: clamp(24px, 3.4vw, 40px); font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+.what { margin: 10px 0 0; color: var(--ink-2); text-wrap: balance; }
 .small { margin: 6px 0 0; color: var(--ink-3); font-size: 15px; }
 
 footer {
@@ -171,7 +172,10 @@ footer {
 .prose b { color: var(--ink); font-weight: 600; }
 .prose a { color: var(--accent); }
 .prose .date { margin: 0 0 18px; font-size: 14px; color: var(--ink-3); }
-.prose ul { padding-left: 20px; }
+.prose ul, .prose ol { padding-left: 20px; }
+.prose li { margin: 4px 0; }
+.prose code { font: 0.92em ui-monospace, "SF Mono", Menlo, monospace; color: var(--ink); }
+.prose img { display: block; width: 100%; height: auto; margin: 22px 0 8px; border-radius: 12px; }
 .page footer { padding-bottom: 40px; }
 @media (max-width: 760px) { .prose { margin: 80px 14px 32px; padding: 24px; } }
 
