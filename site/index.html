@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HexCam</title>
+<meta name="description" content="HexCam plays your car's dashcam footage on the Mac, all six cameras together.">
+<meta property="og:title" content="HexCam">
+<meta property="og:description" content="See what your car saw.">
+<meta property="og:image" content="https://hexcam.app/screenshot-grid.jpg">
+<meta property="og:url" content="https://hexcam.app/">
+<meta name="theme-color" content="#08090c">
+<link rel="icon" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- The app's backdrop: the footage itself, blurred and dimmed, behind everything. -->
+<div class="backdrop" aria-hidden="true"></div>
+
+<header class="top">
+  <img src="favicon.png" alt="" width="26" height="26">
+  <span>HexCam</span>
+</header>
+
+<main>
+  <!-- One scene, scrubbed by scrolling, as footage is scrubbed in the app: six pictures adrift
+       come together into the window. Without scripts, or with motion turned down, it is just
+       the headline and the picture. -->
+  <section class="film" id="film">
+    <div class="frame">
+      <h1 class="line" data-line="0">See what your car saw.</h1>
+      <p class="line" data-line="1">All six cameras play together.</p>
+      <p class="line" data-line="2">The car's own data plays with them.</p>
+      <p class="line" data-line="3">Arrange them however you like.</p>
+
+      <div class="stage" id="stage">
+        <img class="shot" id="shot-a" src="screenshot-grid.jpg" width="2400" height="1400" alt="The HexCam window: six camera pictures in a grid beside a list of events and a map, with the car's speed drawn along the timeline under them.">
+        <img class="shot" id="shot-b" src="screenshot-center.jpg" width="2400" height="1400" alt="" aria-hidden="true">
+      </div>
+    </div>
+  </section>
+
+  <section class="end">
+    <img src="icon.png" alt="" width="112" height="112">
+    <p class="soon">Coming soon to the Mac App Store.</p>
+    <p class="small">macOS 26 or later on Apple silicon.</p>
+  </section>
+</main>
+
+<footer>
+  <a href="privacy.html">Privacy</a>
+  <span>HexCam is an independent app, not made or endorsed by Tesla, Inc.</span>
+</footer>
+
+<!-- The page's own transport: scrolling is the playhead. -->
+<div class="scrub" aria-hidden="true">
+  <span class="play"></span>
+  <span class="track"><span class="played" id="played"></span></span>
+  <span class="clock" id="clock">14:33:00</span>
+</div>
+
+<script src="film.js"></script>
+</body>
+</html>
